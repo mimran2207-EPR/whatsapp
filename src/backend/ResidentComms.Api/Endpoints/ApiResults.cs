@@ -15,7 +15,7 @@ public static class ApiResults
     public static int StatusFor(string code) => code switch
     {
         "NOT_FOUND" => StatusCodes.Status404NotFound,
-        "FORBIDDEN_ROLE" or "NOT_APPROVER" or "SELF_APPROVAL_ABOVE_THRESHOLD" => StatusCodes.Status403Forbidden,
+        "FORBIDDEN_ROLE" or "FORBIDDEN_DEPARTMENT" or "NOT_APPROVER" or "SELF_APPROVAL_ABOVE_THRESHOLD" => StatusCodes.Status403Forbidden,
         "STALE_REVISION" or "APPROVAL_INVALID" or "ALREADY_RELEASED" or "INVALID_STATE" => StatusCodes.Status409Conflict,
         "VALIDATION_FAILED" => StatusCodes.Status400BadRequest,
         "FILE_TOO_LARGE" => StatusCodes.Status413PayloadTooLarge,

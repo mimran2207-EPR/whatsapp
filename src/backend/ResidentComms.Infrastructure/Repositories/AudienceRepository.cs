@@ -75,7 +75,7 @@ public sealed class AudienceRepository(SqlConnectionFactory db, TimeProvider clo
         }
 
         var codesCount = rows.SelectMany(r => r.Codes).GroupBy(x => x).ToDictionary(g => g.Key, g => g.Count());
-        var sample = rows.Take(5).Select(r => new ImportSampleRow(r.SourceRowNumber, r.SourceRecipientId, r.Name,
+        var sample = rows.Take(5).Select(r => new ImportSampleRow(r.SourceRowNumber, IdentityMask.MaskId(r.SourceRecipientId), IdentityMask.MaskName(r.Name),
             PhoneMask.Mask(r.Phone.Normalized ?? r.Phone.Raw), r.State, r.Codes)).ToList();
 
         await tx.CommitAsync();
@@ -95,6 +95,6 @@ public sealed class AudienceRepository(SqlConnectionFactory db, TimeProvider clo
             @"SELECT source_row_number AS Row, source_recipient_id AS Id, validation_codes AS Codes FROM AudienceMember
               WHERE tenant_id = @tenant AND audience_version_id = @versionId AND validation_state <> 'VALID' ORDER BY source_row_number",
             new { tenant, versionId });
-        return rows.Select(r => new ImportErrorRow(r.Row, r.Id, string.IsNullOrEmpty(r.Codes) ? [] : r.Codes.Split(','))).ToList();
+        return rows.Select(r => new ImportErrorRow(r.Row, IdentityMask.MaskId(r.Id), string.IsNullOrEmpty(r.Codes) ? [] : r.Codes.Split(','))).ToList();
     }
 }

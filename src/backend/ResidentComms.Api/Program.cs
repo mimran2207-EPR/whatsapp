@@ -18,6 +18,7 @@ builder.Services.AddSingleton(sp => new SqlConnectionFactory(
     ?? throw new InvalidOperationException("ConnectionStrings:Default is not configured.")));
 builder.Services.AddSingleton<IdempotencyStore>();
 builder.Services.TryAddSingleton(TimeProvider.System);
+builder.Services.AddSingleton<ImportLimits>();
 builder.Services.AddSingleton<AudienceRepository>();
 builder.Services.AddSingleton<CampaignRepository>();
 builder.Services.AddSingleton<ReleaseService>();

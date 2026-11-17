@@ -29,7 +29,7 @@ public static class CampaignEndpoints
         });
 
         v1.MapGet("/approvals", async (ICurrentUser user, CampaignRepository repo) =>
-            ApiResults.CanApprove(user) ? Results.Ok(await repo.ListApprovalsAsync(user.TenantId, user.UserId)) : Results.Ok(Array.Empty<object>()));
+            ApiResults.CanApprove(user) ? Results.Ok(await repo.ListApprovalsAsync(user.TenantId, user.UserId, user.DepartmentId)) : Results.Ok(Array.Empty<object>()));
 
         v1.MapPost("/campaigns", async (CreateCampaignRequest req, ICurrentUser user, CampaignRepository repo) =>
         {
@@ -74,14 +74,14 @@ public static class CampaignEndpoints
         {
             if (!ApiResults.CanApprove(user)) return ApiResults.Error("NOT_APPROVER", StatusCodes.Status403Forbidden);
             if (string.IsNullOrWhiteSpace(req.PackageHash)) return ApiResults.Error("VALIDATION_FAILED", StatusCodes.Status400BadRequest);
-            var r = await repo.ApproveAsync(user.TenantId, id, user.UserId, req.PackageHash);
+            var r = await repo.ApproveAsync(user.TenantId, id, user.UserId, user.DepartmentId, req.PackageHash);
             return ApiResults.From(r, approvalId => Results.Ok(new { approvalId }));
         });
 
         v1.MapPost("/campaigns/{id:guid}/release", async (Guid id, ICurrentUser user, ReleaseService release) =>
         {
             if (!ApiResults.CanApprove(user)) return ApiResults.ForbiddenRole();
-            var r = await release.ReleaseAsync(user.TenantId, id);
+            var r = await release.ReleaseAsync(user.TenantId, id, user.DepartmentId);
             return ApiResults.From(r, o => Results.Json(
                 new { messagesCreated = o.MessagesCreated, suppressed = o.Suppressed, environment = "sandbox-mock" },
                 statusCode: StatusCodes.Status202Accepted));

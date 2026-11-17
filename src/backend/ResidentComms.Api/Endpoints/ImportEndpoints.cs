@@ -8,10 +8,8 @@ namespace ResidentComms.Api.Endpoints;
 
 public static class ImportEndpoints
 {
-    public const long MaxRequestBytes = 10 * 1024 * 1024;
-    public const long MaxUncompressedBytes = 100L * 1024 * 1024;
-    public const int MaxRows = 20_000;
-    public const int MaxColumns = 50;
+    // Hard transport ceiling (file limit + multipart overhead); the file itself is compared to ImportLimits.MaxFileBytes.
+    private const long TransportCeilingBytes = 10 * 1024 * 1024 + 64 * 1024;
 
     private sealed record MappingDto(string? IdColumn, string? NameColumn, string? PhoneColumn, string[]? VariableColumns);
 
@@ -20,10 +18,9 @@ public static class ImportEndpoints
     public static void MapImports(this RouteGroupBuilder v1)
     {
         // The body is read manually (not bound) so the idempotency filter can hash it first, and so limits are enforced before parsing.
-        v1.MapPost("/import-jobs", async (HttpRequest req, ICurrentUser user, AudienceRepository audiences) =>
+        v1.MapPost("/import-jobs", async (HttpRequest req, ICurrentUser user, AudienceRepository audiences, ImportLimits limits) =>
         {
             if (!ApiResults.CanAuthor(user)) return ApiResults.ForbiddenRole();
-            if (req.ContentLength is > MaxRequestBytes) return ApiResults.Error("FILE_TOO_LARGE", StatusCodes.Status413PayloadTooLarge);
             if (!req.HasFormContentType) return ApiResults.Error("VALIDATION_FAILED", StatusCodes.Status400BadRequest);
 
             IFormCollection form;
@@ -33,7 +30,7 @@ public static class ImportEndpoints
 
             var file = form.Files.GetFile("file");
             if (file is null || file.Length == 0) return ApiResults.Error("VALIDATION_FAILED", StatusCodes.Status400BadRequest);
-            if (file.Length > MaxRequestBytes) return ApiResults.Error("FILE_TOO_LARGE", StatusCodes.Status413PayloadTooLarge);
+            if (file.Length > limits.MaxFileBytes) return ApiResults.Error("FILE_TOO_LARGE", StatusCodes.Status413PayloadTooLarge);
 
             MappingDto? dto;
             try { dto = JsonSerializer.Deserialize<MappingDto>(form["mapping"].ToString(), Json); }
@@ -53,13 +50,26 @@ public static class ImportEndpoints
             var fileName = Path.GetFileName(file.FileName);
             if (Path.GetExtension(fileName).Equals(".xlsx", StringComparison.OrdinalIgnoreCase))
             {
-                // Zip-bomb guard: inspect entry sizes before ClosedXML touches the file.
+                // An .xlsx is a zip: reject a spoofed extension by its signature (PK\x03\x04).
+                if (bytes.Length < 4 || bytes[0] != 0x50 || bytes[1] != 0x4B || bytes[2] != 0x03 || bytes[3] != 0x04)
+                    return ApiResults.Error("UNSUPPORTED_FILE", StatusCodes.Status422UnprocessableEntity);
+                // Zip-bomb guard on ACTUAL decompressed bytes (entry headers can lie): stream every entry to Stream.Null under a running cap.
                 try
                 {
                     using var zip = new ZipArchive(new MemoryStream(bytes), ZipArchiveMode.Read);
                     long total = 0;
-                    foreach (var e in zip.Entries) total += e.Length;
-                    if (total > MaxUncompressedBytes) return ApiResults.Error("FILE_TOO_LARGE", StatusCodes.Status413PayloadTooLarge);
+                    var buffer = new byte[81920];
+                    foreach (var e in zip.Entries)
+                    {
+                        await using var entry = e.Open();
+                        int n;
+                        while ((n = await entry.ReadAsync(buffer)) > 0)
+                        {
+                            total += n;
+                            if (total > limits.MaxUncompressedBytes)
+                                return ApiResults.Error("FILE_TOO_LARGE_UNCOMPRESSED", StatusCodes.Status422UnprocessableEntity);
+                        }
+                    }
                 }
                 catch (InvalidDataException) { return ApiResults.Error("UNSUPPORTED_FILE", StatusCodes.Status422UnprocessableEntity); }
             }
@@ -70,8 +80,8 @@ public static class ImportEndpoints
             catch (Exception ex) when (ex is InvalidDataException or IOException or FormatException or InvalidOperationException or NullReferenceException)
             { return ApiResults.Error("UNREADABLE_FILE", StatusCodes.Status422UnprocessableEntity); }
 
-            if (sheet.Headers.Count > MaxColumns) return ApiResults.Error("TOO_MANY_COLUMNS", StatusCodes.Status422UnprocessableEntity);
-            if (sheet.Rows.Count > MaxRows) return ApiResults.Error("TOO_MANY_ROWS", StatusCodes.Status422UnprocessableEntity);
+            if (sheet.Headers.Count > limits.MaxColumns) return ApiResults.Error("TOO_MANY_COLUMNS", StatusCodes.Status422UnprocessableEntity);
+            if (sheet.Rows.Count > limits.MaxRows) return ApiResults.Error("TOO_MANY_ROWS", StatusCodes.Status422UnprocessableEntity);
 
             IReadOnlyList<ValidatedRow> rows;
             try { rows = ImportValidator.Validate(sheet, mapping); }
@@ -80,7 +90,7 @@ public static class ImportEndpoints
             var s = await audiences.SaveImportAsync(user.TenantId, user.UserId, fileName, bytes, form["audienceName"].ToString(), sheet, mapping, rows);
             return Results.Json(s, statusCode: StatusCodes.Status201Created);
         })
-        .WithMetadata(new Microsoft.AspNetCore.Mvc.RequestSizeLimitAttribute(MaxRequestBytes + 64 * 1024)); // + multipart overhead
+        .WithMetadata(new Microsoft.AspNetCore.Mvc.RequestSizeLimitAttribute(TransportCeilingBytes));
 
         v1.MapGet("/import-jobs/{id:guid}/errors", async (Guid id, ICurrentUser user, AudienceRepository audiences) =>
         {

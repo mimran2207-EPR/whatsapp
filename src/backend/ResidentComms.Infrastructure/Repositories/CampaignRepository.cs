@@ -97,7 +97,7 @@ public sealed class CampaignRepository(SqlConnectionFactory db, TimeProvider clo
     {
         await using var c = await db.OpenAsync();
         var camp = await c.QuerySingleOrDefaultAsync<CampaignRow>(
-            "SELECT campaign_id AS CampaignId, campaign_state AS CampaignState, created_by AS CreatedBy FROM Campaign WHERE tenant_id = @tenant AND campaign_id = @campaignId",
+            "SELECT campaign_id AS CampaignId, campaign_state AS CampaignState, created_by AS CreatedBy, department_id AS DepartmentId FROM Campaign WHERE tenant_id = @tenant AND campaign_id = @campaignId",
             new { tenant, campaignId });
         if (camp is null) return Fail<PreflightReport>("NOT_FOUND");
         var rev = (await CampaignQueries.LoadCurrentRevisionAsync(c, null, tenant, campaignId))!;
@@ -133,13 +133,15 @@ public sealed class CampaignRepository(SqlConnectionFactory db, TimeProvider clo
     }
 
     /// <summary>The caller must already hold the approver role (checked at the API layer).</summary>
-    public async Task<OpResult<Guid>> ApproveAsync(Guid tenant, Guid campaignId, string approverId, string packageHash)
+    public async Task<OpResult<Guid>> ApproveAsync(Guid tenant, Guid campaignId, string approverId, string approverDepartment, string packageHash)
     {
         await using var c = await db.OpenAsync();
         await using var tx = (SqlTransaction)await c.BeginTransactionAsync();
         var camp = await CampaignQueries.LoadCampaignLockedAsync(c, tx, tenant, campaignId);
         if (camp is null) return Fail<Guid>("NOT_FOUND");
+        if (camp.DepartmentId != approverDepartment) return Fail<Guid>("FORBIDDEN_DEPARTMENT");
         if (camp.CampaignState == "RELEASED") return Fail<Guid>("ALREADY_RELEASED");
+        if (camp.CampaignState != "SUBMITTED") return Fail<Guid>("INVALID_STATE");
         var rev = (await CampaignQueries.LoadCurrentRevisionAsync(c, tx, tenant, campaignId))!;
         if (!rev.IsComplete) return Fail<Guid>("INVALID_STATE");
 
@@ -154,7 +156,6 @@ public sealed class CampaignRepository(SqlConnectionFactory db, TimeProvider clo
             case ApprovalDecision.SelfApprovalAboveThreshold: return Fail<Guid>("SELF_APPROVAL_ABOVE_THRESHOLD");
             case ApprovalDecision.NotApproverRole: return Fail<Guid>("NOT_APPROVER");
         }
-        if (camp.CampaignState != "SUBMITTED") return Fail<Guid>("INVALID_STATE");
 
         var now = clock.GetUtcNow().UtcDateTime;
         var approvalId = Guid.NewGuid();
@@ -191,7 +192,7 @@ public sealed class CampaignRepository(SqlConnectionFactory db, TimeProvider clo
     public DateTimeOffset DataAsOf => clock.GetUtcNow();
 
     /// <summary>SUBMITTED campaigns the approver may approve: not the creator above the self-approval threshold.</summary>
-    public async Task<IReadOnlyList<ApprovalListItem>> ListApprovalsAsync(Guid tenant, string userId)
+    public async Task<IReadOnlyList<ApprovalListItem>> ListApprovalsAsync(Guid tenant, string userId, string department)
     {
         await using var c = await db.OpenAsync();
         var max = (await CampaignQueries.LoadPolicyAsync(c, null, tenant)).SelfApprovalMaxRecipients;
@@ -204,7 +205,7 @@ public sealed class CampaignRepository(SqlConnectionFactory db, TimeProvider clo
               FROM Campaign c
               JOIN CampaignRevision r ON r.tenant_id = c.tenant_id AND r.campaign_id = c.campaign_id
                AND r.revision_no = (SELECT MAX(x.revision_no) FROM CampaignRevision x WHERE x.tenant_id = c.tenant_id AND x.campaign_id = c.campaign_id)
-              WHERE c.tenant_id = @tenant AND c.campaign_state = 'SUBMITTED' ORDER BY c.updated_at", new { tenant });
+              WHERE c.tenant_id = @tenant AND c.department_id = @department AND c.campaign_state = 'SUBMITTED' ORDER BY c.updated_at", new { tenant, department });
         return rows.Where(r => !(r.CreatedBy == userId && r.Recipients > max))
             .Select(r => new ApprovalListItem(r.CampaignId, r.Name, r.Purpose, r.CreatedBy, r.Channel, r.Recipients, r.Hash ?? "")).ToList();
     }

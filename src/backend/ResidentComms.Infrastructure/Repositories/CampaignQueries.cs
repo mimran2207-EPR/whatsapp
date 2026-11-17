@@ -11,6 +11,7 @@ public sealed class CampaignRow
     public Guid CampaignId { get; set; }
     public string CampaignState { get; set; } = "";
     public string CreatedBy { get; set; } = "";
+    public string DepartmentId { get; set; } = "";
 }
 
 public sealed class RevisionRow
@@ -89,7 +90,7 @@ internal static class CampaignQueries
 
     public static Task<CampaignRow?> LoadCampaignLockedAsync(SqlConnection c, SqlTransaction tx, Guid tenant, Guid campaignId)
         => c.QuerySingleOrDefaultAsync<CampaignRow>(
-            @"SELECT campaign_id AS CampaignId, campaign_state AS CampaignState, created_by AS CreatedBy
+            @"SELECT campaign_id AS CampaignId, campaign_state AS CampaignState, created_by AS CreatedBy, department_id AS DepartmentId
               FROM Campaign WITH (UPDLOCK, HOLDLOCK) WHERE tenant_id = @tenant AND campaign_id = @campaignId",
             new { tenant, campaignId }, tx);
 
@@ -131,7 +132,7 @@ internal static class CampaignQueries
         public string? ContentText { get; set; }
     }
 
-    private static async Task<bool> DuplicateInWindowAsync(SqlConnection c, SqlTransaction? tx, Guid tenant, Guid campaignId, RevisionRow rev, PolicyRow policy, DateTimeOffset now)
+    public static async Task<bool> DuplicateInWindowAsync(SqlConnection c, SqlTransaction? tx, Guid tenant, Guid campaignId, RevisionRow rev, PolicyRow policy, DateTimeOffset now)
     {
         var since = now.UtcDateTime.AddDays(-policy.DuplicateWindowDays);
         var candidates = await c.QueryAsync<Candidate>(

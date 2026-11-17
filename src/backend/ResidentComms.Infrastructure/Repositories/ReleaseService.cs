@@ -21,7 +21,7 @@ public sealed class ReleaseService(SqlConnectionFactory db, TimeProvider clock)
 
     private static OpResult<ReleaseOutcome> Fail(string code) => OpResult<ReleaseOutcome>.Fail(code);
 
-    public async Task<OpResult<ReleaseOutcome>> ReleaseAsync(Guid tenant, Guid campaignId)
+    public async Task<OpResult<ReleaseOutcome>> ReleaseAsync(Guid tenant, Guid campaignId, string approverDepartment)
     {
         await using var c = await db.OpenAsync();
         await using var tx = (SqlTransaction)await c.BeginTransactionAsync();
@@ -29,6 +29,7 @@ public sealed class ReleaseService(SqlConnectionFactory db, TimeProvider clock)
         // The row lock serialises concurrent releases: the second one sees RELEASED and answers 409.
         var camp = await CampaignQueries.LoadCampaignLockedAsync(c, tx, tenant, campaignId);
         if (camp is null) return Fail("NOT_FOUND");
+        if (camp.DepartmentId != approverDepartment) return Fail("FORBIDDEN_DEPARTMENT");
         if (camp.CampaignState == "RELEASED") return Fail("ALREADY_RELEASED");
 
         var rev = (await CampaignQueries.LoadCurrentRevisionAsync(c, tx, tenant, campaignId))!;
@@ -42,9 +43,17 @@ public sealed class ReleaseService(SqlConnectionFactory db, TimeProvider clock)
                 AND invalidated_at IS NULL AND approval_package_hash = @hash",
             new { tenant, rev = rev.CampaignRevisionId, hash }, tx);
         if (approved == 0) return Fail("APPROVAL_INVALID");
+        if (camp.CampaignState != "APPROVED") return Fail("INVALID_STATE");
+
+        var now = clock.GetUtcNow();
+
+        // Duplicate send is re-checked at release: another identical campaign may have been released since submit.
+        if (await CampaignQueries.DuplicateInWindowAsync(c, tx, tenant, campaignId, rev, policy, now)) return Fail("DUPLICATE_SEND");
+
+        // M1 has no scheduler: release means "send now". A revision scheduled for the future cannot be honoured, so refuse instead of sending early.
+        if (rev.ScheduledAtUtc is { } scheduled && scheduled > now) return Fail("SCHEDULING_NOT_SUPPORTED_M1");
 
         // 2. Send window: evaluated at release time in the tenant's time zone. No bypass.
-        var now = clock.GetUtcNow();
         var local = TimeZoneInfo.ConvertTime(now, CampaignQueries.Zone(policy.TimeZone));
         if (!SendWindow.Contains(TimeOnly.FromDateTime(local.DateTime), TimeOnly.FromTimeSpan(policy.SendWindowStart), TimeOnly.FromTimeSpan(policy.SendWindowEnd)))
             return Fail("OUTSIDE_SEND_WINDOW");

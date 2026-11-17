@@ -7,6 +7,10 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
+using System.Security.Claims;
+using Microsoft.IdentityModel.JsonWebTokens;
+using Microsoft.IdentityModel.Tokens;
+using ResidentComms.Api.Auth;
 using Microsoft.Data.SqlClient;
 using ResidentComms.Infrastructure.Sql;
 
@@ -57,6 +61,21 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
         builder.UseSetting("ConnectionStrings:Default", DbCs);
         builder.UseSetting("Auth:DevSigningKey", TestSigningKey);
         builder.ConfigureTestServices(s => s.AddSingleton<TimeProvider>(Clock));
+    }
+
+    /// <summary>Test-only token helper: signs with the test key, so tests can act as another tenant or department.</summary>
+    public HttpClient ClientWith(string userId, string role, Guid tenant, string department)
+    {
+        var handler = new JsonWebTokenHandler();
+        var token = handler.CreateToken(new SecurityTokenDescriptor
+        {
+            Issuer = DevAuth.Issuer, Audience = DevAuth.Audience, Expires = DateTime.UtcNow.AddHours(1),
+            SigningCredentials = new SigningCredentials(new SymmetricSecurityKey(Encoding.UTF8.GetBytes(TestSigningKey)), SecurityAlgorithms.HmacSha256),
+            Subject = new ClaimsIdentity([new Claim("sub", userId), new Claim("name", userId), new Claim("role", role), new Claim("tenant_id", tenant.ToString()), new Claim("department_id", department)]),
+        });
+        var c = CreateClient();
+        c.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        return c;
     }
 
     public async Task<HttpClient> LoginAs(string userId)

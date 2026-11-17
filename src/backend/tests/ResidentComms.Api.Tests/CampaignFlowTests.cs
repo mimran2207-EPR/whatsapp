@@ -86,10 +86,10 @@ public class CampaignFlowTests(ApiFactory f) : IClassFixture<ApiFactory>
         Assert.Equal("APPROVAL_INVALID", await rel.CodeOf());
         Assert.Equal(0, await f.Db.ScalarAsync<int>($"SELECT COUNT(*) FROM Message WHERE campaign_id = '{camp}'"));
 
-        // The old package hash can no longer be approved.
+        // The old package hash can no longer be approved (the campaign is back in DRAFT, so the state check answers first).
         var stale = await meir.ApproveRaw(camp, hash);
         Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode);
-        Assert.Equal("STALE_REVISION", await stale.CodeOf());
+        Assert.Equal("INVALID_STATE", await stale.CodeOf());
     }
 
     [Fact] public async Task Missing_field_without_default_blocks_submit()
@@ -193,7 +193,7 @@ public class CampaignFlowTests(ApiFactory f) : IClassFixture<ApiFactory>
         var id = body.GetProperty("importRunId").GetGuid();
         var errs = await (await dana.GetAsync($"/v1/import-jobs/{id}/errors")).Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal(4, errs.GetArrayLength());
-        Assert.Contains(errs.EnumerateArray(), e => e.GetProperty("sourceRecipientId").GetString() == Fixtures.FormulaRowId
+        Assert.Contains(errs.EnumerateArray(), e => e.GetProperty("sourceRecipientId").GetString() == "*****0002"
             && e.GetProperty("codes").EnumerateArray().Any(c => c.GetString() == "FORMULA_VALUE"));
     }
 
