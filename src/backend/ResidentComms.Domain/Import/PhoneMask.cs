@@ -12,7 +12,7 @@ public static class PhoneMask
 }
 
 /// <summary>
-/// Masks personal identifiers in API responses. IDs keep only the last 4 characters ("*****6789");
+/// Masks personal identifiers in API responses. IDs keep at most the last 4 characters (fewer for short IDs, always under half) ("*****6789");
 /// names keep the first word and the initial of the rest ("רונית כ.").
 /// </summary>
 public static class IdentityMask
@@ -20,7 +20,9 @@ public static class IdentityMask
     public static string MaskId(string? id)
     {
         var s = (id ?? "").Trim();
-        return s.Length > 4 ? "*****" + s[^4..] : "*****";
+        // Never reveal half or more of the ID (a 5-character ID must not show 4 of its 5 characters); at most 4.
+        var shown = s.Length <= 4 ? 0 : Math.Min(4, (s.Length - 1) / 2);
+        return shown > 0 ? "*****" + s[^shown..] : "*****";
     }
 
     public static string? MaskName(string? name)

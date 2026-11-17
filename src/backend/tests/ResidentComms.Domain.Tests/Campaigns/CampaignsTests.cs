@@ -66,13 +66,13 @@ public class ApprovalPackageTests
 public class ApprovalPolicyTests
 {
     [Fact] public void Creator_cannot_self_approve_above_threshold()
-        => Assert.Equal(ApprovalDecision.SelfApprovalAboveThreshold, ApprovalPolicy.Check("u1", true, "u1", 3180, 1000, "h", "h"));
+        => Assert.Equal(ApprovalDecision.SelfApprovalAboveThreshold, ApprovalPolicy.Check("u1", true, ["u1"], 3180, 1000, "h", "h"));
     [Fact] public void Creator_may_self_approve_at_or_below_threshold()
-        => Assert.Equal(ApprovalDecision.Allowed, ApprovalPolicy.Check("u1", true, "u1", 1000, 1000, "h", "h"));
+        => Assert.Equal(ApprovalDecision.Allowed, ApprovalPolicy.Check("u1", true, ["u1"], 1000, 1000, "h", "h"));
     [Fact] public void Approver_role_is_required()
-        => Assert.Equal(ApprovalDecision.NotApproverRole, ApprovalPolicy.Check("u2", false, "u1", 10, 1000, "h", "h"));
+        => Assert.Equal(ApprovalDecision.NotApproverRole, ApprovalPolicy.Check("u2", false, ["u1"], 10, 1000, "h", "h"));
     [Fact] public void Changed_package_is_stale()
-        => Assert.Equal(ApprovalDecision.StaleRevision, ApprovalPolicy.Check("u2", true, "u1", 10, 1000, "h1", "h2"));
+        => Assert.Equal(ApprovalDecision.StaleRevision, ApprovalPolicy.Check("u2", true, ["u1"], 10, 1000, "h1", "h2"));
 }
 
 public class MessageKeyTests

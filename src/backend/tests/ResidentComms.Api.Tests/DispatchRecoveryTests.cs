@@ -117,6 +117,32 @@ public class DispatchRecoveryTests(ApiFactory f) : IClassFixture<ApiFactory>
         Assert.True(leaseSeconds > 100, $"lease was {leaseSeconds}s");
     }
 
+    [Fact] public async Task A_batch_row_that_another_worker_claimed_meanwhile_is_skipped_at_phase_a()
+    {
+        var (camp, _) = await Released("lease-owner");
+        var inCampaign = $"aggregate_id IN (SELECT message_id FROM Message WHERE campaign_id = '{camp}')";
+        Assert.True(await f.Db.ScalarAsync<int>($"SELECT COUNT(*) FROM OutboxMessage WHERE {inCampaign}") >= 2);
+        Guid? sent = null;
+        var adapter = new FuncAdapter(async r =>
+        {
+            // The first row of this campaign is in flight; "another worker" re-claims every other row of the campaign (their leases had expired).
+            var mine = await f.Db.ScalarAsync<int>($"SELECT COUNT(*) FROM Message WHERE campaign_id = '{camp}' AND message_id = '{r.MessageId}'") == 1;
+            if (mine && sent is null)
+            {
+                sent = r.MessageId;
+                await f.Db.ExecAsync($"UPDATE OutboxMessage SET locked_until = DATEADD(minute, 10, SYSUTCDATETIME()) WHERE {inCampaign} AND aggregate_id <> '{r.MessageId}'");
+            }
+            return Accept();
+        });
+        await Dispatcher(adapter).RunOnceAsync(CancellationToken.None);
+
+        Assert.NotNull(sent);
+        var others = $"message_id IN (SELECT message_id FROM Message WHERE campaign_id = '{camp}' AND message_id <> '{sent}')";
+        Assert.DoesNotContain(adapter.Calls, c => c.MessageId != sent && c.MessageId != Guid.Empty && f.Db.ScalarAsync<int>($"SELECT COUNT(*) FROM Message WHERE campaign_id = '{camp}' AND message_id = '{c.MessageId}'").Result == 1);
+        Assert.Equal(0, await f.Db.ScalarAsync<int>($"SELECT COUNT(*) FROM SendAttempt WHERE {others}"));
+        Assert.Equal(0, await f.Db.ScalarAsync<int>($"SELECT COUNT(*) FROM OutboxMessage WHERE {inCampaign} AND aggregate_id <> '{sent}' AND processed_at IS NOT NULL"));
+    }
+
     [Fact] public async Task Provider_message_id_is_unique_per_provider()
     {
         var (camp, _) = await Released("unique-pm");
@@ -150,10 +176,35 @@ public class DispatchRecoveryTests(ApiFactory f) : IClassFixture<ApiFactory>
         Assert.Equal(HttpStatusCode.RequestEntityTooLarge, (await f.CreateClient().SendAsync(declared)).StatusCode);
     }
 
+    [Theory]
+    [InlineData("timeout")]   // TaskCanceledException after the request left (HttpClient timeout)
+    [InlineData("generic")]   // any other adapter failure: nobody knows whether the request left
+    [InlineData("http")]      // HttpRequestException is NOT proof the request never left
+    public async Task Any_adapter_exception_other_than_provider_not_reached_is_ambiguous_and_never_resent(string kind)
+    {
+        var (_, id) = await Released("ambiguous-" + kind);
+        var adapter = new FuncAdapter(r => throw (kind switch
+        {
+            "timeout" => new TaskCanceledException("The request was canceled due to the configured HttpClient.Timeout"),
+            "http" => new HttpRequestException("connection reset while reading the response"),
+            _ => (Exception)new InvalidOperationException("boom"),
+        }));
+        var d = Dispatcher(adapter);
+        await d.RunOnceAsync(CancellationToken.None);
+        await f.Db.ExecAsync($"UPDATE OutboxMessage SET available_at = DATEADD(minute, -1, SYSUTCDATETIME()), locked_until = NULL WHERE aggregate_id = '{id}'");
+        await d.RunOnceAsync(CancellationToken.None);
+        await d.RunOnceAsync(CancellationToken.None);
+
+        Assert.Equal(1, adapter.Calls.Count(c => c.MessageId == id)); // never resent
+        Assert.Equal("UNKNOWN", await f.Db.ScalarAsync<string>($"SELECT handoff_state FROM Message WHERE message_id = '{id}'"));
+        Assert.Equal(1, await f.Db.ScalarAsync<int>($"SELECT COUNT(*) FROM SendAttempt WHERE message_id = '{id}' AND attempt_outcome = 'AMBIGUOUS' AND acceptance_ambiguous = 1"));
+        Assert.Equal(1, await f.Db.ScalarAsync<int>($"SELECT COUNT(*) FROM OutboxMessage WHERE aggregate_id = '{id}' AND processed_at IS NOT NULL"));
+    }
+
     [Fact] public async Task Local_failure_retry_sends_the_same_idempotency_key_and_fifth_failure_is_rejected_before_send()
     {
         var (_, id) = await Released("retry");
-        var adapter = new FuncAdapter(r => throw new HttpRequestException("down"));
+        var adapter = new FuncAdapter(r => throw new ProviderNotReachedException("down"));
         var d = Dispatcher(adapter);
         var keys = new List<string>();
         for (var round = 1; round <= 5; round++)

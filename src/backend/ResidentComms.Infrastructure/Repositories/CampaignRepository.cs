@@ -30,12 +30,13 @@ public sealed class CampaignRepository(SqlConnectionFactory db, TimeProvider clo
             new { campaignId, tenant, department, name, purpose, userId, now = clock.GetUtcNow().UtcDateTime }, tx);
         await c.ExecuteAsync("INSERT CampaignRevision(campaign_revision_id, tenant_id, campaign_id, revision_no) VALUES (@revisionId, @tenant, @campaignId, 1)",
             new { revisionId, tenant, campaignId }, tx);
+        await RecordActorAsync(c, tx, tenant, revisionId, userId, "EDIT");
         await tx.CommitAsync();
         return (campaignId, revisionId);
     }
 
     /// <summary>Applies a draft change. DRAFT: edited in place. SUBMITTED/APPROVED: a new revision, and any approval is invalidated.</summary>
-    public async Task<OpResult<PatchOutcome>> PatchDraftAsync(Guid tenant, Guid campaignId, DraftPatch p)
+    public async Task<OpResult<PatchOutcome>> PatchDraftAsync(Guid tenant, Guid campaignId, string actorId, DraftPatch p)
     {
         if (p.Channel is not null && p.Channel != "SMS") return Fail<PatchOutcome>("CHANNEL_NOT_SUPPORTED");
         if (p.ContentText is not null && (string.IsNullOrWhiteSpace(p.ContentText) || p.ContentText.Length > MaxContentLength)) return Fail<PatchOutcome>("VALIDATION_FAILED");
@@ -86,6 +87,7 @@ public sealed class CampaignRepository(SqlConnectionFactory db, TimeProvider clo
                   WHERE a.tenant_id = @tenant AND r.campaign_id = @campaignId AND a.invalidated_at IS NULL",
                 new { now, tenant, campaignId }, tx) > 0;
         }
+        await RecordActorAsync(c, tx, tenant, revisionId, actorId, "EDIT");
         await c.ExecuteAsync("UPDATE Campaign SET campaign_state = 'DRAFT', updated_at = @now WHERE tenant_id = @tenant AND campaign_id = @campaignId",
             new { now, tenant, campaignId }, tx);
         await tx.CommitAsync();
@@ -96,7 +98,7 @@ public sealed class CampaignRepository(SqlConnectionFactory db, TimeProvider clo
     /// Withdraws a submission (and any approval): back to DRAFT on a new revision, the same way a material edit after submit does.
     /// A DRAFT is left as is. A released campaign cannot be reopened.
     /// </summary>
-    public async Task<OpResult<PatchOutcome>> ReopenAsync(Guid tenant, Guid campaignId)
+    public async Task<OpResult<PatchOutcome>> ReopenAsync(Guid tenant, Guid campaignId, string actorId)
     {
         var now = clock.GetUtcNow().UtcDateTime;
         await using var c = await db.OpenAsync();
@@ -121,11 +123,17 @@ public sealed class CampaignRepository(SqlConnectionFactory db, TimeProvider clo
               JOIN CampaignRevision r ON r.tenant_id = a.tenant_id AND r.campaign_revision_id = a.campaign_revision_id
               WHERE a.tenant_id = @tenant AND r.campaign_id = @campaignId AND a.invalidated_at IS NULL",
             new { now, tenant, campaignId }, tx) > 0;
+        await RecordActorAsync(c, tx, tenant, revisionId, actorId, "EDIT");
         await c.ExecuteAsync("UPDATE Campaign SET campaign_state = 'DRAFT', updated_at = @now WHERE tenant_id = @tenant AND campaign_id = @campaignId",
             new { now, tenant, campaignId }, tx);
         await tx.CommitAsync();
         return OpResult<PatchOutcome>.Success(new PatchOutcome(revisionId, invalidated));
     }
+
+    private static Task RecordActorAsync(SqlConnection c, SqlTransaction tx, Guid tenant, Guid revisionId, string userId, string action) => c.ExecuteAsync(
+        @"IF NOT EXISTS (SELECT 1 FROM CampaignRevisionActor WHERE tenant_id = @tenant AND campaign_revision_id = @revisionId AND user_id = @userId AND action = @action)
+            INSERT CampaignRevisionActor(tenant_id, campaign_revision_id, user_id, action) VALUES (@tenant, @revisionId, @userId, @action)",
+        new { tenant, revisionId, userId, action }, tx);
 
     private static DateTime TruncateMs(DateTime d) => new(d.Ticks - d.Ticks % TimeSpan.TicksPerMillisecond, DateTimeKind.Utc);
 
@@ -145,7 +153,7 @@ public sealed class CampaignRepository(SqlConnectionFactory db, TimeProvider clo
     private static PreflightReport ToReport(Evaluation ev)
         => new(ev.Findings.Select(CampaignQueries.ToDto).ToList(), ev.EligibleRecipients, ev.SegmentsPerMessage, ev.Encoding, ev.CostMin, ev.CostMax);
 
-    public async Task<OpResult<string>> SubmitAsync(Guid tenant, Guid campaignId)
+    public async Task<OpResult<string>> SubmitAsync(Guid tenant, Guid campaignId, string actorId)
     {
         await using var c = await db.OpenAsync();
         await using var tx = (SqlTransaction)await c.BeginTransactionAsync();
@@ -162,6 +170,7 @@ public sealed class CampaignRepository(SqlConnectionFactory db, TimeProvider clo
 
         await c.ExecuteAsync("UPDATE CampaignRevision SET approval_package_hash = @hash WHERE tenant_id = @tenant AND campaign_revision_id = @id",
             new { hash = ev.PackageHash, tenant, id = rev.CampaignRevisionId }, tx);
+        await RecordActorAsync(c, tx, tenant, rev.CampaignRevisionId, actorId, "SUBMIT");
         await c.ExecuteAsync("UPDATE Campaign SET campaign_state = 'SUBMITTED', updated_at = @now WHERE tenant_id = @tenant AND campaign_id = @campaignId",
             new { now = now.UtcDateTime, tenant, campaignId }, tx);
         await tx.CommitAsync();
@@ -185,7 +194,10 @@ public sealed class CampaignRepository(SqlConnectionFactory db, TimeProvider clo
         var current = CampaignQueries.Hash(rev, policy);
         var recipients = (await CampaignQueries.LoadMembersAsync(c, tx, tenant, rev.AudienceVersionId!.Value)).Count(m => !m.Suppressed);
 
-        var decision = ApprovalPolicy.Check(approverId, true, camp.CreatedBy, recipients, policy.SelfApprovalMaxRecipients, packageHash, current);
+        var contributors = (await c.QueryAsync<string>(
+            "SELECT DISTINCT user_id FROM CampaignRevisionActor WHERE tenant_id = @tenant AND campaign_revision_id = @rev",
+            new { tenant, rev = rev.CampaignRevisionId }, tx)).Append(camp.CreatedBy).ToList();
+        var decision = ApprovalPolicy.Check(approverId, true, contributors, recipients, policy.SelfApprovalMaxRecipients, packageHash, current);
         switch (decision)
         {
             case ApprovalDecision.StaleRevision: return Fail<Guid>("STALE_REVISION");
@@ -209,15 +221,15 @@ public sealed class CampaignRepository(SqlConnectionFactory db, TimeProvider clo
     {
         await using var c = await db.OpenAsync();
         var rows = await c.QueryAsync<CampaignListItem>(
-            @"SELECT c.campaign_id AS CampaignId, c.campaign_name AS Name, c.communication_purpose AS Purpose, c.campaign_state AS State, r.channel AS Channel,
+            $@"SELECT c.campaign_id AS CampaignId, c.campaign_name AS Name, c.communication_purpose AS Purpose, c.campaign_state AS State, r.channel AS Channel,
                      CASE WHEN c.campaign_state = 'RELEASED'
                           THEN (SELECT COUNT(*) FROM CampaignRecipient cr WHERE cr.tenant_id = c.tenant_id AND cr.campaign_id = c.campaign_id)
                           ELSE (SELECT COUNT(*) FROM AudienceMember m WHERE m.tenant_id = c.tenant_id AND m.audience_version_id = r.audience_version_id
                                   AND m.validation_state = 'VALID' AND m.phone_normalized IS NOT NULL) END AS Recipients,
                      (SELECT COUNT(*) FROM Message x WHERE x.tenant_id = c.tenant_id AND x.campaign_id = c.campaign_id AND x.handoff_state = 'ACCEPTED') AS Accepted,
-                     (SELECT COUNT(*) FROM Message x WHERE x.tenant_id = c.tenant_id AND x.campaign_id = c.campaign_id AND x.delivery_state = 'DELIVERED') AS Delivered,
-                     (SELECT COUNT(*) FROM Message x WHERE x.tenant_id = c.tenant_id AND x.campaign_id = c.campaign_id AND (x.delivery_state = 'UNKNOWN' OR x.handoff_state = 'UNKNOWN')) AS Unknown,
-                     (SELECT COUNT(*) FROM Message x WHERE x.tenant_id = c.tenant_id AND x.campaign_id = c.campaign_id AND (x.delivery_state = 'FAILED' OR x.handoff_state = 'REJECTED')) AS Failed
+                     (SELECT COUNT(*) FROM Message x WHERE x.tenant_id = c.tenant_id AND x.campaign_id = c.campaign_id AND {MessageBuckets.Sql("x")} = '{MessageBuckets.Delivered}') AS Delivered,
+                     (SELECT COUNT(*) FROM Message x WHERE x.tenant_id = c.tenant_id AND x.campaign_id = c.campaign_id AND {MessageBuckets.Sql("x")} = '{MessageBuckets.Unknown}') AS Unknown,
+                     (SELECT COUNT(*) FROM Message x WHERE x.tenant_id = c.tenant_id AND x.campaign_id = c.campaign_id AND {MessageBuckets.Sql("x")} = '{MessageBuckets.Failed}') AS Failed
               FROM Campaign c
               JOIN CampaignRevision r ON r.tenant_id = c.tenant_id AND r.campaign_id = c.campaign_id
                AND r.revision_no = (SELECT MAX(x.revision_no) FROM CampaignRevision x WHERE x.tenant_id = c.tenant_id AND x.campaign_id = c.campaign_id)
@@ -232,17 +244,18 @@ public sealed class CampaignRepository(SqlConnectionFactory db, TimeProvider clo
     {
         await using var c = await db.OpenAsync();
         var max = (await CampaignQueries.LoadPolicyAsync(c, null, tenant)).SelfApprovalMaxRecipients;
-        var rows = await c.QueryAsync<(Guid CampaignId, string Name, string Purpose, string CreatedBy, string? Channel, int Recipients, string? Hash)>(
+        var rows = await c.QueryAsync<(Guid CampaignId, string Name, string Purpose, string CreatedBy, string? Channel, int Recipients, string? Hash, bool Involved)>(
             @"SELECT c.campaign_id, c.campaign_name, c.communication_purpose, c.created_by, r.channel,
                      (SELECT COUNT(*) FROM AudienceMember m WHERE m.tenant_id = c.tenant_id AND m.audience_version_id = r.audience_version_id
                         AND m.validation_state = 'VALID' AND m.phone_normalized IS NOT NULL
                         AND NOT EXISTS (SELECT 1 FROM SuppressionEntry s WHERE s.tenant_id = m.tenant_id AND s.channel = 'SMS' AND s.destination_normalized = m.phone_normalized)) AS Recipients,
-                     r.approval_package_hash
+                     r.approval_package_hash,
+                     CAST(CASE WHEN EXISTS (SELECT 1 FROM CampaignRevisionActor a WHERE a.tenant_id = r.tenant_id AND a.campaign_revision_id = r.campaign_revision_id AND a.user_id = @userId) THEN 1 ELSE 0 END AS bit) AS Involved
               FROM Campaign c
               JOIN CampaignRevision r ON r.tenant_id = c.tenant_id AND r.campaign_id = c.campaign_id
                AND r.revision_no = (SELECT MAX(x.revision_no) FROM CampaignRevision x WHERE x.tenant_id = c.tenant_id AND x.campaign_id = c.campaign_id)
-              WHERE c.tenant_id = @tenant AND c.department_id = @department AND c.campaign_state = 'SUBMITTED' ORDER BY c.updated_at", new { tenant, department });
-        return rows.Where(r => !(r.CreatedBy == userId && r.Recipients > max))
+              WHERE c.tenant_id = @tenant AND c.department_id = @department AND c.campaign_state = 'SUBMITTED' ORDER BY c.updated_at", new { tenant, department, userId });
+        return rows.Where(r => !((r.CreatedBy == userId || r.Involved) && r.Recipients > max))
             .Select(r => new ApprovalListItem(r.CampaignId, r.Name, r.Purpose, r.CreatedBy, r.Channel, r.Recipients, r.Hash ?? "")).ToList();
     }
 }

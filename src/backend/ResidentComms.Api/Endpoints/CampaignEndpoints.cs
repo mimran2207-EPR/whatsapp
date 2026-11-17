@@ -65,7 +65,7 @@ public static class CampaignEndpoints
             catch (JsonException) { return ApiResults.Error("VALIDATION_FAILED", StatusCodes.Status400BadRequest); }
             if (req is null) return ApiResults.Error("VALIDATION_FAILED", StatusCodes.Status400BadRequest);
             var clear = body.TryGetProperty("scheduledAt", out var sa) && sa.ValueKind == JsonValueKind.Null;
-            var r = await repo.PatchDraftAsync(user.TenantId, id,
+            var r = await repo.PatchDraftAsync(user.TenantId, id, user.UserId,
                 new DraftPatch(req.AudienceVersionId, req.Channel, req.ContentText, req.FieldDefaults, req.ScheduledAt, clear));
             return ApiResults.From(r, o => Results.Ok(new { revisionId = o.RevisionId, approvalInvalidated = o.ApprovalInvalidated }));
         });
@@ -74,7 +74,7 @@ public static class CampaignEndpoints
         v1.MapPost("/campaigns/{id:guid}/reopen", async (Guid id, ICurrentUser user, CampaignRepository repo) =>
         {
             if (!ApiResults.CanAuthor(user)) return ApiResults.ForbiddenRole();
-            var r = await repo.ReopenAsync(user.TenantId, id);
+            var r = await repo.ReopenAsync(user.TenantId, id, user.UserId);
             return ApiResults.From(r, o => Results.Ok(new { revisionId = o.RevisionId, approvalInvalidated = o.ApprovalInvalidated }));
         });
 
@@ -96,7 +96,7 @@ public static class CampaignEndpoints
         v1.MapPost("/campaigns/{id:guid}/submit", async (Guid id, SubmitRequest? req, ICurrentUser user, CampaignRepository repo) =>
         {
             if (!ApiResults.CanAuthor(user)) return ApiResults.ForbiddenRole();
-            var r = await repo.SubmitAsync(user.TenantId, id);
+            var r = await repo.SubmitAsync(user.TenantId, id, user.UserId);
             return ApiResults.From(r, hash => Results.Ok(new { packageHash = hash }));
         });
 

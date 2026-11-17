@@ -12,14 +12,20 @@ public static partial class PhoneNormalizer
 
     public static PhoneResult NormalizeIsraeliMobile(string? raw)
     {
-        if (string.IsNullOrWhiteSpace(raw)) return new(raw, null, PhoneIssue.Empty);
-        var trimmed = raw.Trim();
+        // Spreadsheets carry NBSP, tabs and invisible bidi marks (LRM/RLM/embeddings); none of them is part of the number.
+        var trimmed = raw is null ? "" : new string(raw.Where(ch => !char.IsWhiteSpace(ch) && char.GetUnicodeCategory(ch) != System.Globalization.UnicodeCategory.Format).ToArray());
+        if (trimmed.Length == 0) return new(raw, null, PhoneIssue.Empty);
         if (Scientific().IsMatch(trimmed)) return new(raw, null, PhoneIssue.ScientificNotation);
-        var compact = trimmed.Replace(" ", "").Replace("-", "").Replace("(", "").Replace(")", "");
+        var compact = trimmed.Replace("-", "").Replace("(", "").Replace(")", "");
         if (compact.StartsWith('+')) compact = compact[1..];
         if (!compact.All(char.IsAsciiDigit)) return new(raw, null, PhoneIssue.NonDigits);
         string national;
-        if (compact.StartsWith("972")) national = "0" + compact[3..];
+        if (compact.StartsWith("972"))
+        {
+            var rest = compact[3..];
+            if (rest.StartsWith('0')) rest = rest[1..]; // "+972 (0) 52...": the trunk zero is not part of the international form
+            national = "0" + rest;
+        }
         else if (compact.Length == 9 && compact[0] == '5') return new(raw, null, PhoneIssue.LostLeadingZero);
         else if (compact.Length == 9 && compact[0] == '0') return new(raw, null, PhoneIssue.NotMobile);
         else national = compact;

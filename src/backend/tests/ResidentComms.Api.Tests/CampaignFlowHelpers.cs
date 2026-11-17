@@ -86,3 +86,12 @@ public static class CampaignFlowHelpers
         return await r.ReadAs<ReleaseResult>();
     }
 }
+
+public static class ApprovalListHelpers
+{
+    public static async Task<List<Guid>> GetFromJsonAsyncList(this HttpClient c, string url)
+    {
+        var j = await c.GetFromJsonAsync<JsonElement>(url);
+        return j.EnumerateArray().Select(e => e.GetProperty("campaignId").GetGuid()).ToList();
+    }
+}

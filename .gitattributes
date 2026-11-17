@@ -1,0 +1,26 @@
+# Normalise line endings: text files are LF in the repository.
+* text=auto eol=lf
+
+# Windows-native project files stay as their tools write them.
+*.sln   text eol=crlf
+*.slnx  text eol=lf
+*.csproj text eol=lf
+*.props text eol=lf
+
+# Binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
+*.pdf binary
+*.xlsx binary
+*.xls binary
+*.docx binary
+*.zip binary
+*.pfx binary

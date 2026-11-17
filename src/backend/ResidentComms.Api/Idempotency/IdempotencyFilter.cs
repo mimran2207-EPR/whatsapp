@@ -34,7 +34,13 @@ public sealed class IdempotencyFilter(IdempotencyStore store, ICurrentUser user,
         var pattern = (http.GetEndpoint() as RouteEndpoint)?.RoutePattern.RawText ?? req.Path.Value ?? "";
         var operation = $"{req.Method} {pattern}";
         var tenant = user.TenantId;
-        var hash = await HashAsync(req);
+        string hash;
+        try { hash = await HashAsync(req, CapFor(http)); }
+        catch (Exception ex) when (ex is BodyTooLargeException || ex is BadHttpRequestException { StatusCode: StatusCodes.Status413PayloadTooLarge })
+        {
+            // The body is read here, before the endpoint: an over-cap body must be a clean 413 (nothing claimed, nothing executed).
+            return Results.Json(new { code = "FILE_TOO_LARGE" }, statusCode: StatusCodes.Status413PayloadTooLarge);
+        }
 
         switch (await store.ClaimAsync(tenant, operation, key, hash))
         {
@@ -74,15 +80,28 @@ public sealed class IdempotencyFilter(IdempotencyStore store, ICurrentUser user,
         return captured;
     }
 
-    private static async Task<string> HashAsync(HttpRequest req)
+    /// <summary>JSON endpoints: 1 MB. Endpoints that declare their own limit (the import upload) keep it.</summary>
+    private const long DefaultBodyCap = 1024 * 1024;
+
+    private static long CapFor(HttpContext http)
+        => http.GetEndpoint()?.Metadata.GetMetadata<Microsoft.AspNetCore.Http.Metadata.IRequestSizeLimitMetadata>()?.MaxRequestBodySize ?? DefaultBodyCap;
+
+    private sealed class BodyTooLargeException : Exception;
+
+    private static async Task<string> HashAsync(HttpRequest req, long cap)
     {
         using var sha = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         sha.AppendData(Encoding.UTF8.GetBytes($"{req.Method}\n{req.Path.Value}{req.QueryString.Value}\n"));
         if (req.Body.CanSeek) req.Body.Position = 0;
-        using var ms = new MemoryStream();
-        await req.Body.CopyToAsync(ms);
+        if (req.ContentLength > cap) throw new BodyTooLargeException();
+        var buffer = new byte[81920]; long total = 0; int n;
+        while ((n = await req.Body.ReadAsync(buffer)) > 0)
+        {
+            total += n;
+            if (total > cap) throw new BodyTooLargeException();
+            sha.AppendData(buffer.AsSpan(0, n));
+        }
         if (req.Body.CanSeek) req.Body.Position = 0;
-        sha.AppendData(ms.ToArray());
         return Convert.ToHexStringLower(sha.GetHashAndReset());
     }
 

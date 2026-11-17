@@ -46,13 +46,47 @@ public class FoundationTests(ApiFactory f) : IClassFixture<ApiFactory>
         Assert.Equal(1, await f.Db.ScalarAsync<int>($"SELECT COUNT(*) FROM Campaign WHERE campaign_name = N'replay-{key}'"));
     }
 
-    [Fact] public async Task Tenant_comes_from_token_not_body()
+    [Fact] public async Task Tenant_comes_from_token_only_never_from_body_header_query_or_route()
     {
-        var c = await f.LoginAs("dana");
-        var r = await c.SendWithKey(HttpMethod.Post, "/v1/campaigns", new { name = "x", purpose = "SERVICE", tenantId = Guid.NewGuid() }, Guid.NewGuid().ToString());
-        var id = (await r.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("campaignId").GetGuid();
-        Assert.Equal(ApiFactory.DevTenant, await f.Db.ScalarAsync<Guid>($"SELECT tenant_id FROM Campaign WHERE campaign_id = '{id}'"));
-        Assert.Equal(1, await f.Db.ScalarAsync<int>($"SELECT revision_no FROM CampaignRevision WHERE campaign_id = '{id}'"));
+        var tenantB = Guid.NewGuid();
+        await f.Db.ExecAsync($"INSERT Tenant(tenant_id, name) VALUES ('{tenantB}', N'tenant B'); INSERT TenantPolicy(tenant_id) VALUES ('{tenantB}');");
+        var a = await f.LoginAs("dana");                                                        // tenant A = dev tenant
+        var b = f.ClientWith("bella", "creator", tenantB, "EDU");                               // tenant B
+
+        async Task<Guid> Create(HttpClient c, string name, Guid spoof)
+        {
+            var req = new HttpRequestMessage(HttpMethod.Post, $"/v1/campaigns?tenantId={spoof}")
+            { Content = JsonContent.Create(new { name, purpose = "SERVICE", tenantId = spoof, tenant_id = spoof }) };
+            req.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
+            req.Headers.Add("X-Tenant-Id", spoof.ToString());
+            req.Headers.Add("Tenant-Id", spoof.ToString());
+            var r = await c.SendAsync(req);
+            Assert.Equal(HttpStatusCode.Created, r.StatusCode);
+            return (await r.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("campaignId").GetGuid();
+        }
+
+        var idA = await Create(a, "tenant-A-campaign", spoof: tenantB);                         // A claims to be B everywhere
+        var idB = await Create(b, "tenant-B-campaign", spoof: ApiFactory.DevTenant);            // B claims to be A everywhere
+        Assert.Equal(ApiFactory.DevTenant, await f.Db.ScalarAsync<Guid>($"SELECT tenant_id FROM Campaign WHERE campaign_id = '{idA}'"));
+        Assert.Equal(tenantB, await f.Db.ScalarAsync<Guid>($"SELECT tenant_id FROM Campaign WHERE campaign_id = '{idB}'"));
+        Assert.Equal(1, await f.Db.ScalarAsync<int>($"SELECT revision_no FROM CampaignRevision WHERE campaign_id = '{idA}'"));
+
+        // each tenant sees only its own rows, whatever it claims
+        async Task<List<Guid>> ListIds(HttpClient c, Guid spoof)
+        {
+            var req = new HttpRequestMessage(HttpMethod.Get, $"/v1/campaigns?tenantId={spoof}");
+            req.Headers.Add("X-Tenant-Id", spoof.ToString());
+            return (await (await c.SendAsync(req)).Content.ReadFromJsonAsync<JsonElement>()).EnumerateArray().Select(e => e.GetProperty("campaignId").GetGuid()).ToList();
+        }
+        var seenByA = await ListIds(a, tenantB); var seenByB = await ListIds(b, ApiFactory.DevTenant);
+        Assert.Contains(idA, seenByA); Assert.DoesNotContain(idB, seenByA);
+        Assert.Contains(idB, seenByB); Assert.DoesNotContain(idA, seenByB);
+
+        // reading the other tenant's campaign by id is 404 even with a spoofed header
+        var spoofed = new HttpRequestMessage(HttpMethod.Get, $"/v1/campaigns/{idA}");
+        spoofed.Headers.Add("X-Tenant-Id", ApiFactory.DevTenant.ToString());
+        Assert.Equal(HttpStatusCode.NotFound, (await b.SendAsync(spoofed)).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await b.GetAsync($"/v1/campaigns/{idA}/tracking")).StatusCode);
     }
 
     [Fact] public async Task Dev_users_lists_three_synthetic_users()

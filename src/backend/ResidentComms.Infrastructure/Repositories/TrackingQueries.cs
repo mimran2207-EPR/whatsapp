@@ -27,18 +27,26 @@ public sealed class TrackingQueries(SqlConnectionFactory db, TimeProvider clock)
         if (await c.ExecuteScalarAsync<int>(new CommandDefinition("SELECT COUNT(*) FROM Campaign WHERE tenant_id = @tenant AND campaign_id = @campaignId", new { tenant, campaignId }, cancellationToken: ct)) == 0)
             return null;
 
+        // Delivery buckets come from the same expression as the campaign list (MessageBuckets): a timeout (handoff UNKNOWN) is "unknown",
+        // a provider rejection is "failed", never "sent or not reported".
         var k = await c.QuerySingleAsync<Counts>(new CommandDefinition(
-            @"SELECT COUNT(*) AS Total,
-                     COALESCE(SUM(CASE WHEN delivery_state = 'DELIVERED' THEN 1 ELSE 0 END), 0) AS Delivered,
-                     COALESCE(SUM(CASE WHEN delivery_state IN ('NOT_REPORTED','SENT_PER_PROVIDER') THEN 1 ELSE 0 END), 0) AS SentOrNotReported,
-                     COALESCE(SUM(CASE WHEN delivery_state = 'UNKNOWN' THEN 1 ELSE 0 END), 0) AS DUnknown,
-                     COALESCE(SUM(CASE WHEN delivery_state = 'FAILED' THEN 1 ELSE 0 END), 0) AS Failed,
+            $@"SELECT COUNT(*) AS Total,
+                     COALESCE(SUM(CASE WHEN {MessageBuckets.Sql("Message")} = '{MessageBuckets.Delivered}' THEN 1 ELSE 0 END), 0) AS Delivered,
+                     COALESCE(SUM(CASE WHEN {MessageBuckets.Sql("Message")} IN ('{MessageBuckets.Sent}','{MessageBuckets.NotReported}') THEN 1 ELSE 0 END), 0) AS SentOrNotReported,
+                     COALESCE(SUM(CASE WHEN {MessageBuckets.Sql("Message")} = '{MessageBuckets.Unknown}' THEN 1 ELSE 0 END), 0) AS DUnknown,
+                     COALESCE(SUM(CASE WHEN {MessageBuckets.Sql("Message")} = '{MessageBuckets.Failed}' THEN 1 ELSE 0 END), 0) AS Failed,
                      COALESCE(SUM(CASE WHEN handoff_state = 'ACCEPTED' THEN 1 ELSE 0 END), 0) AS Accepted,
                      COALESCE(SUM(CASE WHEN handoff_state = 'REJECTED' THEN 1 ELSE 0 END), 0) AS Rejected,
                      COALESCE(SUM(CASE WHEN handoff_state = 'UNKNOWN' THEN 1 ELSE 0 END), 0) AS HUnknown,
                      COALESCE(SUM(CASE WHEN handoff_state = 'NOT_HANDED_OFF' THEN 1 ELSE 0 END), 0) AS NotHandedOff
               FROM Message WHERE tenant_id = @tenant AND campaign_id = @campaignId",
             new { tenant, campaignId }, cancellationToken: ct));
+
+        // dataAsOf = the latest provider event received for this campaign (not "now"); with no events yet, the current time.
+        var asOf = await c.ExecuteScalarAsync<DateTime?>(new CommandDefinition(
+            "SELECT MAX(e.received_at) FROM MessageEvent e JOIN Message m ON m.tenant_id = e.tenant_id AND m.message_id = e.message_id WHERE m.tenant_id = @tenant AND m.campaign_id = @campaignId",
+            new { tenant, campaignId }, cancellationToken: ct));
+        var dataAsOf = asOf is null ? clock.GetUtcNow() : new DateTimeOffset(DateTime.SpecifyKind(asOf.Value, DateTimeKind.Utc));
 
         var handedOff = k.Total - k.NotHandedOff; // denominator: pending and unknown stay in
 
@@ -66,7 +74,7 @@ public sealed class TrackingQueries(SqlConnectionFactory db, TimeProvider clock)
         }
 
         return new TrackingView(
-            "sandbox-mock", clock.GetUtcNow(), k.Total,
+            "sandbox-mock", dataAsOf, k.Total,
             new() { ["delivered"] = k.Delivered, ["sentOrNotReported"] = k.SentOrNotReported, ["unknown"] = k.DUnknown, ["failed"] = k.Failed },
             new() { ["accepted"] = k.Accepted, ["rejected"] = k.Rejected, ["unknown"] = k.HUnknown, ["notHandedOff"] = k.NotHandedOff },
             [

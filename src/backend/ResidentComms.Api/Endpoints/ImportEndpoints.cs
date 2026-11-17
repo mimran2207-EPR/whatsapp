@@ -94,6 +94,7 @@ public static class ImportEndpoints
 
         v1.MapGet("/import-jobs/{id:guid}/errors", async (Guid id, ICurrentUser user, AudienceRepository audiences) =>
         {
+            if (!ApiResults.CanAuthor(user)) return ApiResults.ForbiddenRole(); // error rows carry (masked) recipient ids: same roles as the import itself
             var errors = await audiences.GetErrorsAsync(user.TenantId, id);
             return errors is null
                 ? ApiResults.Error("NOT_FOUND", StatusCodes.Status404NotFound)

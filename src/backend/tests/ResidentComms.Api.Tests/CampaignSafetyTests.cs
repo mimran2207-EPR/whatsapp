@@ -81,6 +81,20 @@ public class CampaignSafetyTests(ApiFactory f) : IClassFixture<ApiFactory>
         Assert.Equal("UNSUPPORTED_FILE", await r.CodeOf());
     }
 
+    // The idempotency filter reads the body before the endpoint does: an over-cap body must be a clean 413, not a 500.
+    [Fact] public async Task Body_over_the_transport_ceiling_is_413_not_500_even_through_the_idempotency_filter()
+    {
+        var dana = await f.LoginAs("dana");
+        var huge = new byte[10 * 1024 * 1024 + 256 * 1024]; // > 10 MB + 64 KB ceiling of /v1/import-jobs
+        var r = await dana.UploadImportRaw(huge, "huge.csv", Mapping);
+        Assert.Equal(HttpStatusCode.RequestEntityTooLarge, r.StatusCode);
+        Assert.Equal("FILE_TOO_LARGE", await r.CodeOf());
+
+        // a JSON endpoint has a small default cap too
+        var big = await dana.SendWithKey(HttpMethod.Post, "/v1/campaigns", new { name = new string('x', 2 * 1024 * 1024), purpose = "SERVICE" }, Guid.NewGuid().ToString());
+        Assert.Equal(HttpStatusCode.RequestEntityTooLarge, big.StatusCode);
+    }
+
     // ---- 3. file size compared to the configured limit ----
     [Fact] public async Task File_larger_than_the_limit_is_rejected_with_413()
     {

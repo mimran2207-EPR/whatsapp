@@ -75,7 +75,7 @@ public sealed class MockSmsAdapter : ISmsAdapter, IDisposable
                 var providerMessageId = "mock-" + Guid.NewGuid().ToString("N");
                 Schedule(providerMessageId);
                 return Task.FromResult(new SendOutcome(SendOutcome.Accepted, providerMessageId, null));
-            default: throw new HttpRequestException("Mock provider unreachable (simulated: the request never left).");
+            default: throw new ProviderNotReachedException("Mock provider unreachable (simulated: the request never left).");
         }
     }
 

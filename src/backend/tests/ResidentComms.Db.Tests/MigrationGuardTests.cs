@@ -16,5 +16,8 @@ public class MigrationGuardTests
     [InlineData("ResidentComms_")]
     [InlineData("whatsapp2")]
     [InlineData("ResidentComms_a b")]
+    [InlineData("whatsapp\n")]
+    [InlineData("ResidentComms_x\n")]
+    [InlineData("whatsapp\r\n")]
     public void Rejected_names(string name) => Assert.False(MigrationRunner.IsAllowedDatabase(name));
 }

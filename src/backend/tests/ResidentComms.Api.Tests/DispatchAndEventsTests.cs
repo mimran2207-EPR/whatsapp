@@ -155,6 +155,76 @@ public class DispatchAndEventsTests(ApiFactory f) : IClassFixture<ApiFactory>
 
     [Fact] public async Task Tracking_matches_truth_book_counts()
     {
+        var (camp, rina) = await SeedTruthBook("truth-book-01", withUnknownAndRejected: false);
+        await AssertTruthBook(camp, rina, messages: 5, delivered: 2, failed: 1, unknown: 1, sentOrNotReported: 1, accepted: 5, exceptions: 2);
+    }
+
+    [Fact] public async Task Tracking_matches_truth_book_counts_with_unknown_and_rejected_rows_present()
+    {
+        // Same truth book plus one handoff-UNKNOWN message (timeout) and one provider-REJECTED message: they belong to the
+        // unknown / failed buckets, exactly as the campaign list counts them, and never to sentOrNotReported.
+        var (camp, rina) = await SeedTruthBook("truth-book-01-extra", withUnknownAndRejected: true);
+        await AssertTruthBook(camp, rina, messages: 7, delivered: 2, failed: 2, unknown: 2, sentOrNotReported: 1, accepted: 5, exceptions: 4);
+        var list = (await rina.GetFromJsonAsync<JsonElement>("/v1/campaigns")).EnumerateArray().Single(c => c.GetProperty("campaignId").GetGuid() == camp).GetProperty("counts");
+        Assert.Equal(2, list.GetProperty("delivered").GetInt32());
+        Assert.Equal(2, list.GetProperty("failed").GetInt32());
+        Assert.Equal(2, list.GetProperty("unknown").GetInt32());
+    }
+
+    [Fact] public async Task Tracking_banner_and_list_agree_for_timeouts_rejection_delivered_and_failed_through_the_real_dispatcher()
+    {
+        var dana = await f.LoginAs("dana"); var meir = await f.LoginAs("meir"); var rina = await f.LoginAs("rina");
+        var csv = "ת.ז,שם הורה,טל נייד הורה,שם ילד,גן\r\n" + string.Concat(Enumerable.Range(1, 6).Select(i => $"30200000{i},הורה {i},052222000{i},ילד,גן\r\n"));
+        var imp = await dana.UploadImport(new UTF8Encoding(true).GetPreamble().Concat(Encoding.UTF8.GetBytes(csv)).ToArray(), "buckets.csv", Mapping);
+        var camp = await dana.CreateCampaign("buckets");
+        await dana.PatchDraft(camp, new { audienceVersionId = imp.AudienceVersionId, channel = "SMS", contentText = "שלום {שם הורה} (buckets)", fieldDefaults = new Dictionary<string, string>() });
+        await meir.Approve(camp, await dana.Submit(camp));
+        Assert.Equal(6, (await meir.Release(camp)).MessagesCreated);
+
+        var ids = new List<Guid>();
+        for (var i = 0; i < 6; i++) ids.Add(await f.Db.ScalarAsync<Guid>($"SELECT message_id FROM Message WHERE campaign_id = '{camp}' ORDER BY destination_value OFFSET {i} ROWS FETCH NEXT 1 ROWS ONLY"));
+        var options = Options();
+        foreach (var id in ids.Take(3)) options.ForcedOutcomes[id] = SendOutcome.Ambiguous;   // 3 timeouts
+        options.ForcedOutcomes[ids[3]] = SendOutcome.Rejected;                              // 1 rejected by the provider
+        await Dispatcher(options).RunOnceAsync(CancellationToken.None);                      // ids[4], ids[5] accepted
+
+        // delivered / failed arrive as signed provider events (the real events path); the clock is moved so event time is recognisable
+        var pm4 = await f.Db.ScalarAsync<string>($"SELECT provider_message_id FROM Message WHERE message_id = '{ids[4]}'");
+        var pm5 = await f.Db.ScalarAsync<string>($"SELECT provider_message_id FROM Message WHERE message_id = '{ids[5]}'");
+        var before = f.Clock.Now;
+        f.Clock.Now = before.AddMinutes(7);
+        try
+        {
+            Assert.Equal(HttpStatusCode.OK, (await Event(pm4, "delivered")).StatusCode);
+            Assert.Equal(HttpStatusCode.OK, (await Event(pm5, "failed")).StatusCode);
+        }
+        finally { f.Clock.Now = before; }
+
+        var j = await rina.GetFromJsonAsync<JsonElement>($"/v1/campaigns/{camp}/tracking");
+        var d = j.GetProperty("delivery");
+        Assert.Equal(6, j.GetProperty("messages").GetInt32());
+        Assert.Equal(1, d.GetProperty("delivered").GetInt32());
+        Assert.Equal(2, d.GetProperty("failed").GetInt32());            // failed delivery + provider rejection
+        Assert.Equal(3, d.GetProperty("unknown").GetInt32());           // the three timeouts
+        Assert.Equal(0, d.GetProperty("sentOrNotReported").GetInt32());
+        Assert.Equal(2, j.GetProperty("handoff").GetProperty("accepted").GetInt32());
+        Assert.Equal(1, j.GetProperty("handoff").GetProperty("rejected").GetInt32());
+        Assert.Equal(3, j.GetProperty("handoff").GetProperty("unknown").GetInt32());
+        Assert.Equal(5, j.GetProperty("exceptions").GetArrayLength()); // 3 unknown + 1 rejected + 1 failed
+
+        var list = (await rina.GetFromJsonAsync<JsonElement>("/v1/campaigns")).EnumerateArray().Single(c => c.GetProperty("campaignId").GetGuid() == camp).GetProperty("counts");
+        Assert.Equal(d.GetProperty("delivered").GetInt32(), list.GetProperty("delivered").GetInt32());
+        Assert.Equal(d.GetProperty("failed").GetInt32(), list.GetProperty("failed").GetInt32());
+        Assert.Equal(d.GetProperty("unknown").GetInt32(), list.GetProperty("unknown").GetInt32());
+
+        // dataAsOf is the latest event time, not "now"
+        var latest = await f.Db.ScalarAsync<DateTime>($"SELECT MAX(e.received_at) FROM MessageEvent e JOIN Message m ON m.message_id = e.message_id WHERE m.campaign_id = '{camp}'");
+        Assert.Equal(DateTime.SpecifyKind(latest, DateTimeKind.Utc), j.GetProperty("dataAsOf").GetDateTimeOffset().UtcDateTime);
+        Assert.NotEqual(before, j.GetProperty("dataAsOf").GetDateTimeOffset());
+    }
+
+    private async Task<(Guid Camp, HttpClient Rina)> SeedTruthBook(string name, bool withUnknownAndRejected)
+    {
         // Seed 5 messages for 3 recipients exactly as docs/qa/truth-book-01.md (states set directly via SQL),
         // then GET tracking → messages 5, delivered 2, failed 1, unknown 1, sentOrNotReported 1,
         // operationalDeliveryRate numerator 2 / denominator 5 (all handed off).
@@ -164,8 +234,8 @@ public class DispatchAndEventsTests(ApiFactory f) : IClassFixture<ApiFactory>
                 + "301000002,רונית לוי,0521110002,איתי,דובדבן\r\n"
                 + "301000003,יעל בר,0521110012,מאיה,תפוח\r\n";
         var imp = await dana.UploadImport(new UTF8Encoding(true).GetPreamble().Concat(Encoding.UTF8.GetBytes(csv)).ToArray(), "truth.csv", Mapping);
-        var camp = await dana.CreateCampaign("truth-book-01");
-        await dana.PatchDraft(camp, new { audienceVersionId = imp.AudienceVersionId, channel = "SMS", contentText = "שלום {שם הורה} (truth)", fieldDefaults = new Dictionary<string, string>() });
+        var camp = await dana.CreateCampaign(name);
+        await dana.PatchDraft(camp, new { audienceVersionId = imp.AudienceVersionId, channel = "SMS", contentText = $"שלום {{שם הורה}} (truth {name})", fieldDefaults = new Dictionary<string, string>() });
         await meir.Approve(camp, await dana.Submit(camp));
         Assert.Equal(3, (await meir.Release(camp)).MessagesCreated);
 
@@ -184,26 +254,38 @@ public class DispatchAndEventsTests(ApiFactory f) : IClassFixture<ApiFactory>
                    'IN_PROGRESS', 'ACCEPTED', c.state, 'CURRENT'
             FROM Message CROSS JOIN (VALUES ('WHATSAPP', 'DELIVERED'), ('EMAIL', 'NOT_REPORTED')) AS c(channel, state)
             WHERE message_id = '{m2}';");
+        if (withUnknownAndRejected)
+            await f.Db.ExecAsync($@"
+                INSERT Message(message_id, tenant_id, campaign_id, campaign_revision_id, campaign_recipient_id, channel, channel_sequence_no, idempotency_key, destination_value,
+                               processing_state, handoff_state, delivery_state, data_quality)
+                SELECT NEWID(), tenant_id, campaign_id, campaign_revision_id, campaign_recipient_id, 'SMS', c.seq, 'truth-' + CONVERT(VARCHAR(36), NEWID()), destination_value,
+                       'IN_PROGRESS', c.handoff, 'NOT_REPORTED', 'CURRENT'
+                FROM Message CROSS JOIN (VALUES (2, 'UNKNOWN'), (3, 'REJECTED')) AS c(seq, handoff)
+                WHERE message_id = '{m5}';");
+        return (camp, rina);
+    }
 
+    private async Task AssertTruthBook(Guid camp, HttpClient rina, int messages, int delivered, int failed, int unknown, int sentOrNotReported, int accepted, int exceptions)
+    {
         var r = await rina.GetAsync($"/v1/campaigns/{camp}/tracking");
         Assert.Equal(HttpStatusCode.OK, r.StatusCode);
         var j = await r.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal("sandbox-mock", j.GetProperty("environment").GetString());
-        Assert.Equal(5, j.GetProperty("messages").GetInt32());
+        Assert.Equal(messages, j.GetProperty("messages").GetInt32());
         var d = j.GetProperty("delivery");
-        Assert.Equal(2, d.GetProperty("delivered").GetInt32());
-        Assert.Equal(1, d.GetProperty("failed").GetInt32());
-        Assert.Equal(1, d.GetProperty("unknown").GetInt32());
-        Assert.Equal(1, d.GetProperty("sentOrNotReported").GetInt32());
-        Assert.Equal(5, j.GetProperty("handoff").GetProperty("accepted").GetInt32());
+        Assert.Equal(delivered, d.GetProperty("delivered").GetInt32());
+        Assert.Equal(failed, d.GetProperty("failed").GetInt32());
+        Assert.Equal(unknown, d.GetProperty("unknown").GetInt32());
+        Assert.Equal(sentOrNotReported, d.GetProperty("sentOrNotReported").GetInt32());
+        Assert.Equal(accepted, j.GetProperty("handoff").GetProperty("accepted").GetInt32());
         var rate = j.GetProperty("kpis").EnumerateArray().Single(k => k.GetProperty("key").GetString() == "operationalDeliveryRate");
         Assert.Equal(2, rate.GetProperty("numerator").GetInt32());
-        Assert.Equal(5, rate.GetProperty("denominator").GetInt32());
-        Assert.Equal(0.4m, rate.GetProperty("value").GetDecimal());
+        Assert.Equal(messages, rate.GetProperty("denominator").GetInt32());
+        Assert.Equal(Math.Round(2m / messages, 4), rate.GetProperty("value").GetDecimal());
         Assert.Equal("5 הודעות התקבלו אצל הספק. תוצאות המסירה ממשיכות להתעדכן.", j.GetProperty("bannerHe").GetString());
 
         var ex = j.GetProperty("exceptions").EnumerateArray().ToList();
-        Assert.Equal(2, ex.Count);
+        Assert.Equal(exceptions, ex.Count);
         Assert.Contains(ex, e => e.GetProperty("displayStatus").GetString() == "Failed" && e.GetProperty("displayLabelHe").GetString() == "נכשל");
         Assert.Contains(ex, e => e.GetProperty("displayStatus").GetString() == "Unknown" && e.GetProperty("displayLabelHe").GetString() == "לא ידוע");
         Assert.All(ex, e => Assert.Matches(@"^\d{3}-\*\*\*-\*\*\d{2}$", e.GetProperty("recipientMasked").GetString()!));

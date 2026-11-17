@@ -6,7 +6,7 @@ namespace ResidentComms.Infrastructure.Sql;
 /// <summary>Creates the database if missing and applies db/migrations/V*.sql not yet recorded in SchemaVersion.</summary>
 public sealed class MigrationRunner(string server, string database, string migrationsDir)
 {
-    private static readonly Regex AllowedName = new(@"^(whatsapp|ResidentComms_[A-Za-z0-9_]{1,100})$", RegexOptions.CultureInvariant);
+    private static readonly Regex AllowedName = new(@"\A(whatsapp|ResidentComms_[A-Za-z0-9_]{1,100})\z", RegexOptions.CultureInvariant);
 
     public static bool IsAllowedDatabase(string name) => AllowedName.IsMatch(name);
 

@@ -197,6 +197,18 @@ public class CampaignFlowTests(ApiFactory f) : IClassFixture<ApiFactory>
             && e.GetProperty("codes").EnumerateArray().Any(c => c.GetString() == "FORMULA_VALUE"));
     }
 
+    [Fact] public async Task Import_error_rows_need_an_authoring_role()
+    {
+        var dana = await f.LoginAs("dana");
+        var id = (await dana.UploadImport(Fixtures.XlsxBytes(), "הורי גנים.xlsx", Mapping)).ImportRunId;
+        Assert.Equal(HttpStatusCode.OK, (await dana.GetAsync($"/v1/import-jobs/{id}/errors")).StatusCode);
+        var analyst = await f.LoginAs("rina");
+        var denied = await analyst.GetAsync($"/v1/import-jobs/{id}/errors");
+        Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
+        Assert.Equal("FORBIDDEN_ROLE", await denied.CodeOf());
+        Assert.Equal(HttpStatusCode.Forbidden, (await f.ClientWith("x", "visitor", ApiFactory.DevTenant, "EDU").GetAsync($"/v1/import-jobs/{id}/errors")).StatusCode);
+    }
+
     [Fact] public async Task Import_enforces_row_and_column_limits()
     {
         var dana = await f.LoginAs("dana");

@@ -1,3 +1,4 @@
+using System.Data;
 using Dapper;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Hosting;
@@ -26,7 +27,7 @@ public sealed class OutboxDispatcher(SqlConnectionFactory db, ISmsAdapter adapte
     /// </summary>
     public TimeSpan Lease { get; init; } = TimeSpan.FromMinutes(2);
 
-    private sealed record Claimed(long OutboxId, Guid TenantId, Guid MessageId, int Attempts);
+    private sealed record Claimed(long OutboxId, Guid TenantId, Guid MessageId, int Attempts, DateTime LockedUntil);
     private sealed record Msg(string HandoffState, string ProcessingState, string DestinationValue, string IdempotencyKey, string? Text);
     private sealed record AttemptRow(int AttemptNumber, string? Outcome);
 
@@ -49,7 +50,7 @@ public sealed class OutboxDispatcher(SqlConnectionFactory db, ISmsAdapter adapte
         await using (var c = await db.OpenAsync(ct))
             batch = (await c.QueryAsync<Claimed>(new CommandDefinition(
                 @"UPDATE TOP (@batch) o SET locked_until = DATEADD(second, @lock, SYSUTCDATETIME())
-                  OUTPUT inserted.outbox_id AS OutboxId, inserted.tenant_id AS TenantId, inserted.aggregate_id AS MessageId, inserted.attempts AS Attempts
+                  OUTPUT inserted.outbox_id AS OutboxId, inserted.tenant_id AS TenantId, inserted.aggregate_id AS MessageId, inserted.attempts AS Attempts, inserted.locked_until AS LockedUntil
                   FROM OutboxMessage o WITH (ROWLOCK, READPAST, UPDLOCK)
                   WHERE o.message_type = 'dispatch.sms' AND o.processed_at IS NULL AND o.available_at <= SYSUTCDATETIME()
                     AND (o.locked_until IS NULL OR o.locked_until < SYSUTCDATETIME())",
@@ -72,6 +73,18 @@ public sealed class OutboxDispatcher(SqlConnectionFactory db, ISmsAdapter adapte
         await using (var c = await db.OpenAsync(ct))
         await using (var tx = (SqlTransaction)await c.BeginTransactionAsync(ct))
         {
+            // Lock order everywhere: OutboxMessage, then Message, then SendAttempt (Phase B uses the same order, so they cannot deadlock).
+            // Ownership: the batch claim stamped locked_until; if another worker re-claimed this row since (our lease ran out
+            // before we reached it) the stamp differs and the row is theirs. Skip it; renewing the lease proves we still own it.
+            var p0 = new DynamicParameters();
+            p0.Add("outbox", row.OutboxId); p0.Add("expected", row.LockedUntil, DbType.DateTime2); p0.Add("lease", (int)Lease.TotalSeconds);
+            if (await c.ExecuteAsync(new CommandDefinition(
+                    "UPDATE OutboxMessage SET locked_until = DATEADD(second, @lease, SYSUTCDATETIME()) WHERE outbox_id = @outbox AND processed_at IS NULL AND locked_until = @expected",
+                    p0, tx, cancellationToken: ct)) == 0)
+            {
+                log.LogWarning("Outbox row {OutboxId} (message {MessageId}) is no longer leased by this worker; skipped", row.OutboxId, row.MessageId);
+                return;
+            }
             var m = await c.QuerySingleOrDefaultAsync<Msg>(new CommandDefinition(
                 @"SELECT m.handoff_state AS HandoffState, m.processing_state AS ProcessingState, m.destination_value AS DestinationValue, m.idempotency_key AS IdempotencyKey, mc.rendered_text AS Text
                   FROM Message m WITH (UPDLOCK, ROWLOCK) LEFT JOIN MessageContent mc ON mc.tenant_id = m.tenant_id AND mc.message_id = m.message_id
@@ -123,7 +136,14 @@ public sealed class OutboxDispatcher(SqlConnectionFactory db, ISmsAdapter adapte
         SendOutcome? outcome = null; string? localError = null;
         try { outcome = await adapter.SendAsync(new SmsSendRequest(row.MessageId, msg.DestinationValue, msg.Text!, msg.IdempotencyKey), ct); }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; } // attempt stays open -> AMBIGUOUS on re-claim
-        catch (Exception ex) { localError = ex.Message; }
+        catch (ProviderNotReachedException ex) { localError = ex.Message; } // provably never left: the only retryable failure
+        catch (Exception ex)
+        {
+            // Anything else (timeout after send, connection reset, unexpected failure): nobody can say the request did not reach the provider.
+            // Treat as AMBIGUOUS (handoff UNKNOWN), never retry.
+            log.LogWarning(ex, "Adapter call for message {MessageId} failed with an unknown outcome; recorded as ambiguous", row.MessageId);
+            outcome = new SendOutcome(SendOutcome.Ambiguous, null, "ADAPTER_" + (ex is OperationCanceledException ? "TIMEOUT" : "ERROR"));
+        }
 
         // ---- Phase B ----
         // The provider's answer must be recorded even if shutdown was requested meanwhile: CancellationToken.None.
@@ -132,6 +152,9 @@ public sealed class OutboxDispatcher(SqlConnectionFactory db, ISmsAdapter adapte
         await using (var c = await db.OpenAsync(none))
         await using (var tx = (SqlTransaction)await c.BeginTransactionAsync(none))
         {
+            // Same lock order as Phase A: OutboxMessage, Message, then SendAttempt.
+            await c.ExecuteAsync(new CommandDefinition("SELECT 1 FROM OutboxMessage WITH (UPDLOCK, ROWLOCK) WHERE outbox_id = @outbox", new { outbox = row.OutboxId }, tx, cancellationToken: none));
+            await c.ExecuteAsync(new CommandDefinition("SELECT 1 FROM Message WITH (UPDLOCK, ROWLOCK) WHERE tenant_id = @t AND message_id = @id", new { t = row.TenantId, id = row.MessageId }, tx, cancellationToken: none));
             var p = new { t = row.TenantId, id = row.MessageId, n = attemptNumber, pm = outcome?.ProviderMessageId, err = outcome?.ErrorCode };
             async Task<bool> CloseAttempt(string setClause, object args)
             {

@@ -9,8 +9,15 @@ public sealed record SendOutcome(string Kind, string? ProviderMessageId, string?
 }
 
 /// <summary>
-/// Contract: return AMBIGUOUS for a timeout after the request left. THROW only when the request provably never left
-/// (the dispatcher treats a throw as LOCAL_FAILURE and retries with backoff).
+/// The request provably never reached the provider (connection refused, DNS failure, local setup error before any byte was sent).
+/// The ONLY exception the dispatcher treats as LOCAL_FAILURE (retry with backoff, same idempotency key).
+/// </summary>
+public sealed class ProviderNotReachedException(string message, Exception? inner = null) : Exception(message, inner);
+
+/// <summary>
+/// Contract: return AMBIGUOUS for a timeout after the request left. Throw <see cref="ProviderNotReachedException"/> ONLY when the
+/// request provably never left (retried with backoff). Any other exception, including TaskCanceledException/timeouts,
+/// is treated by the dispatcher as AMBIGUOUS (handoff UNKNOWN): never retried, never resent blindly.
 /// </summary>
 public interface ISmsAdapter
 {
