@@ -44,4 +44,24 @@ public class DeliveryMergeTests
         Assert.Equal(new DeliveryMergeResult(DeliveryState.Unknown, true),
             DeliveryMerge.Apply(DeliveryState.Failed, DeliveryState.Delivered));
     }
+
+    [Theory]
+    [InlineData(DeliveryState.Delivered)]
+    [InlineData(DeliveryState.Failed)]
+    [InlineData(DeliveryState.SentPerProvider)]
+    [InlineData(DeliveryState.Unknown)]
+    [InlineData(DeliveryState.NotReported)]
+    public void Conflict_is_sticky(DeliveryState incoming)
+        => Assert.Equal(new DeliveryMergeResult(DeliveryState.Unknown, true),
+            DeliveryMerge.Apply(DeliveryState.Unknown, incoming, currentlyConflicting: true));
+
+    [Fact]
+    public void Late_sent_after_failed_does_not_regress()
+        => Assert.Equal(new DeliveryMergeResult(DeliveryState.Failed, false),
+            DeliveryMerge.Apply(DeliveryState.Failed, DeliveryState.SentPerProvider));
+
+    [Fact]
+    public void Unknown_report_on_not_reported_becomes_unknown()
+        => Assert.Equal(new DeliveryMergeResult(DeliveryState.Unknown, false),
+            DeliveryMerge.Apply(DeliveryState.NotReported, DeliveryState.Unknown));
 }
