@@ -3,7 +3,7 @@ import { HttpTestingController, provideHttpClientTesting } from '@angular/common
 import { TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
 import { TrackingView } from '../../../core/api.client';
-import { TrackingComponent } from './tracking.component';
+import { bannerKind, isAllTerminal, TrackingComponent } from './tracking.component';
 
 const view: TrackingView = {
   environment: 'sandbox-mock',
@@ -103,6 +103,64 @@ describe('TrackingComponent', () => {
     await vi.advanceTimersByTimeAsync(0);
     f.detectChanges();
     expect(live()).toContain(view.bannerHe);
+    f.destroy();
+  });
+
+  it('banner tone follows the server counts: unknown > 0 is not success', async () => {
+    const f = await render(); // handoff.unknown = 1
+    expect(f.nativeElement.querySelector('rc-banner .banner')!.className).toContain('banner--unknown');
+    expect(f.nativeElement.querySelector('.asof')!.textContent).toContain('מתעדכן כל 5 שניות');
+    f.destroy();
+  });
+
+  describe('bannerKind', () => {
+    const base: TrackingView = { ...view, delivery: { delivered: 5, sentOrNotReported: 0, unknown: 0, failed: 0 }, handoff: { accepted: 5, rejected: 0, unknown: 0, notHandedOff: 0 } };
+    it('success only when accepted and nothing contradicts', () => {
+      expect(bannerKind(base)).toBe('success');
+      expect(bannerKind({ ...base, handoff: { ...base.handoff, rejected: 1 } })).toBe('warning');
+      expect(bannerKind({ ...base, delivery: { ...base.delivery, failed: 1 } })).toBe('warning');
+    });
+    it('unknown wins over warning; everything rejected is danger; nothing handed off yet is info', () => {
+      expect(bannerKind({ ...base, handoff: { ...base.handoff, unknown: 1, rejected: 1 } })).toBe('unknown');
+      expect(bannerKind({ ...base, delivery: { ...base.delivery, unknown: 2 } })).toBe('unknown');
+      expect(bannerKind({ ...base, handoff: { accepted: 0, rejected: 5, unknown: 0, notHandedOff: 0 } })).toBe('danger');
+      expect(bannerKind({ ...base, handoff: { accepted: 0, rejected: 0, unknown: 0, notHandedOff: 5 } })).toBe('info');
+    });
+  });
+
+  it('renders a success banner and stops polling (and drops the "every 5 seconds" text) when all messages are final', async () => {
+    const final: TrackingView = {
+      ...view,
+      messages: 5,
+      delivery: { delivered: 5, sentOrNotReported: 0, unknown: 0, failed: 0 },
+      handoff: { accepted: 5, rejected: 0, unknown: 0, notHandedOff: 0 },
+      exceptions: [],
+    };
+    expect(isAllTerminal(final)).toBe(true);
+    expect(isAllTerminal(view)).toBe(false);
+    const f = TestBed.createComponent(TrackingComponent);
+    f.componentRef.setInput('id', 'c1');
+    f.detectChanges();
+    await vi.advanceTimersByTimeAsync(0);
+    ctrl.expectOne('/v1/campaigns/c1/tracking').flush(final);
+    await vi.advanceTimersByTimeAsync(0);
+    f.detectChanges();
+    expect(f.nativeElement.querySelector('rc-banner .banner')!.className).toContain('banner--success');
+    expect(f.nativeElement.querySelector('.asof')!.textContent).not.toContain('מתעדכן');
+    await vi.advanceTimersByTimeAsync(20000);
+    ctrl.expectNone('/v1/campaigns/c1/tracking');
+    f.destroy();
+  });
+
+  it('drops the "every 5 seconds" text after a fatal error', async () => {
+    const f = TestBed.createComponent(TrackingComponent);
+    f.componentRef.setInput('id', 'c1');
+    f.detectChanges();
+    await vi.advanceTimersByTimeAsync(0);
+    ctrl.expectOne('/v1/campaigns/c1/tracking').flush({ code: 'NOT_FOUND' }, { status: 404, statusText: 'x' });
+    await vi.advanceTimersByTimeAsync(0);
+    f.detectChanges();
+    expect(f.nativeElement.querySelector('.asof')!.textContent).not.toContain('מתעדכן');
     f.destroy();
   });
 });

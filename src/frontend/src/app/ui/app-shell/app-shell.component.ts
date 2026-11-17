@@ -19,7 +19,8 @@ export const NAV_ITEMS: readonly { key: NavKey; label: string; icon: IconName; r
 
 /**
  * App shell (Figma 04 App Shell, 12:301). Sidebar on the start (right) edge, 258px; below 1100px it collapses
- * to an 88px icon rail. Top bar: search, "Sandbox (מדומה)" tag, notifications and the user chip.
+ * to an 88px icon rail. Top bar: search and notifications (both disabled, "בקרוב", until built), "Sandbox (מדומה)" tag and the user chip.
+ * A skip-to-content link is the first focusable element; it is visible only while focused.
  */
 @Component({
   selector: 'rc-app-shell',
@@ -34,6 +35,15 @@ export class AppShellComponent {
   readonly userRole = input('יוצר משלוח · כניסה מדומה');
 
   protected readonly nav = NAV_ITEMS;
+
+  /** Skip link: a plain #fragment would resolve against <base href="/"> and navigate, so move focus directly. */
+  protected skipToContent(event: Event): void {
+    event.preventDefault();
+    const main = document.getElementById('rc-main');
+    main?.focus();
+    main?.scrollIntoView?.({ block: 'start' });
+  }
+
   protected readonly initials = computed(() =>
     this.userName()
       .split(/\s+/)

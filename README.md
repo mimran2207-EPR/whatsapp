@@ -45,11 +45,15 @@
 ### בדיקות
 
     dotnet test src/backend/ResidentComms.slnx
-    cd src/frontend && npm test && npm run build
-    cd src/frontend && npx playwright install chromium   # פעם אחת
-    cd src/frontend && npm run e2e
+    cd src/frontend
+    npm ci                              # פעם אחת (ובכל שינוי ב-package-lock.json)
+    npm test && npm run build
+    npx playwright install chromium     # פעם אחת, לבדיקות ה-e2e
+    npm run e2e
 
-בדיקת ה-e2e (Playwright) מפעילה בעצמה API, Worker (ספק מדומה דטרמיניסטי) ו-`ng serve` מול מסד זמני `ResidentComms_Test_<guid>`, מייצרת מפתחות חתימה אקראיים לכל הרצה, מוחקת את המסד בסיומה ועוצרת את כל התהליכים. היא אינה חלק מ-`npm test`.
+דרישות ל-e2e: `npm ci` ו-`npx playwright install chromium` ב-`src/frontend`, ו-`sqlcmd` ב-PATH (נבדק לפני שנוצר משהו; בלעדיו ההרצה נעצרת בלי ליצור מסד).
+
+בדיקת ה-e2e (Playwright) מפעילה בעצמה API, Worker (ספק מדומה דטרמיניסטי) ו-`ng serve` מול מסד זמני `ResidentComms_Test_<guid>`, מייצרת מפתחות חתימה אקראיים לכל הרצה, מוחקת את המסד בסיומה (וגם אם ההכנה נכשלה באמצע) ועוצרת את כל התהליכים. טעינת התצורה (`playwright test --list`) אינה יוצרת דבר. היא אינה חלק מ-`npm test`.
 
 ### פריסה
 

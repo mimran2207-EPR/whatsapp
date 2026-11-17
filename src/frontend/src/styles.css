@@ -30,3 +30,8 @@ body {
 .num {
   font-variant-numeric: tabular-nums;
 }
+
+/* Headings and the main landmark receive programmatic focus on route changes: no ring, they are not controls. */
+[tabindex='-1']:focus {
+  outline: none;
+}

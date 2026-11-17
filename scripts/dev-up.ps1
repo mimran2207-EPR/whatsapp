@@ -43,12 +43,29 @@ if ($missing.Count -gt 0) {
     exit 1
 }
 
+# Fail early (before touching the database) if a port is taken: a stale API/ng serve would silently serve the old build.
+foreach ($port in 5080, 4200) {
+    $busy = $null
+    try { $busy = Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue } catch { }
+    if ($busy) {
+        $owner = ($busy | Select-Object -First 1).OwningProcess
+        Write-Host "Port $port is already in use (process id $owner). Stop that process and run this script again." -ForegroundColor Red
+        exit 1
+    }
+}
+
 Write-Host '== Migrating and seeding database "whatsapp" (Sandbox, synthetic data) ==' -ForegroundColor Cyan
 & dotnet run --project $migrator -- --server $SqlServer --database whatsapp --seed-dev
 if ($LASTEXITCODE -ne 0) { throw 'DbMigrator failed.' }
 
 $connection = "Server=$SqlServer;Database=whatsapp;Integrated Security=true;TrustServerCertificate=true"
 $started = @()
+# Environment variables set below are visible to the child processes only for the lifetime of this script:
+# the caller's values are restored in the finally block (also after Ctrl+C).
+$savedEnv = @{}
+foreach ($name in 'ASPNETCORE_ENVIRONMENT', 'DOTNET_ENVIRONMENT', 'ConnectionStrings__Default') {
+    $savedEnv[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+}
 try {
     Write-Host '== Starting API on http://localhost:5080 ==' -ForegroundColor Cyan
     $env:ASPNETCORE_ENVIRONMENT = 'Development'
@@ -68,5 +85,8 @@ try {
 } finally {
     foreach ($p in $started) {
         if ($p -and -not $p.HasExited) { & taskkill /PID $p.Id /T /F | Out-Null }
+    }
+    foreach ($name in $savedEnv.Keys) {
+        [Environment]::SetEnvironmentVariable($name, $savedEnv[$name], 'Process')
     }
 }

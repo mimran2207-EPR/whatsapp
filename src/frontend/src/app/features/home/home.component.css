@@ -1,7 +1,9 @@
-/* Banner gradient (Figma 535:11253): the one approved local exception to "tokens only" (gradients are not tokens). */
+/* Banner gradient (Figma 535:11253): the one approved local exception to "tokens only" (gradients are not tokens).
+   Both stops keep white text (--color-text-on-brand) at >= 4.5:1 for ANY text size; scripts/home-hero-contrast.test.mjs
+   enforces it. The end stop is darker than the Figma #0FA3B1 (3.05:1, large text only) for that reason. */
 :host {
   --home-banner-from: #13737D;
-  --home-banner-to: #0FA3B1;
+  --home-banner-to: #0C7F8A;
   display: block;
 }
 

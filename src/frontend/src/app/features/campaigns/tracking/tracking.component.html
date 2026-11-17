@@ -2,7 +2,9 @@
   <div class="page-head">
     <h1 class="t-h1-24">מעקב משלוח</h1>
     <span class="sandbox-tag">Sandbox (מדומה)</span>
-    <span class="asof num">נכון ל-{{ asOf() }} · מתעדכן כל 5 שניות</span>
+    <span class="asof num">נכון ל-{{ asOf() }}@if (polling()) {
+      · מתעדכן כל 5 שניות
+    }</span>
     <a class="page-head__actions link-btn" routerLink="/campaigns">לכל המשלוחים</a>
   </div>
 
@@ -16,7 +18,7 @@
   }
 
   @if (view(); as v) {
-    <rc-banner kind="success" [message]="v.bannerHe" />
+    <rc-banner [kind]="bannerKind()" [message]="v.bannerHe" />
 
     <section class="card stack" aria-labelledby="tr-delivery">
       <h2 id="tr-delivery" class="t-h3-18 section-title">מסירה · <span class="num">{{ fmt(v.messages) }}</span> הודעות</h2>

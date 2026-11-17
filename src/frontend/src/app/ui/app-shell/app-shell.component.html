@@ -1,4 +1,5 @@
 <div class="shell">
+  <a class="skip-link" href="#rc-main" (click)="skipToContent($event)">דלגו לתוכן הראשי</a>
   <aside class="sidebar" aria-label="ניווט ראשי">
     <div class="brand">
       <span class="brand__title">תקשורת</span>
@@ -30,14 +31,17 @@
 
   <div class="main">
     <header class="topbar">
-      <form class="search" role="search" (submit)="$event.preventDefault()">
+      <!-- Not built in M1: shown for the layout, disabled and labelled "בקרוב" (not a tab stop, not a landmark). -->
+      <div class="search search--soon" title="בקרוב">
         <rc-icon name="search" [size]="20" />
-        <label class="visually-hidden" for="rc-shell-search">חיפוש</label>
-        <input id="rc-shell-search" type="search" placeholder="חיפוש משלוח, נמען או תבנית" />
-      </form>
+        <label class="visually-hidden" for="rc-shell-search">חיפוש (בקרוב)</label>
+        <input id="rc-shell-search" type="search" placeholder="חיפוש משלוח, נמען או תבנית · בקרוב" disabled aria-disabled="true" />
+      </div>
       <span class="sandbox" title="ספק ההודעות מדומה — אין שליחה אמיתית">Sandbox (מדומה)</span>
       <span class="spacer"></span>
-      <button type="button" class="icon-btn" aria-label="התראות"><rc-icon name="bell" [size]="20" /></button>
+      <button type="button" class="icon-btn" aria-label="התראות (בקרוב)" title="בקרוב" disabled aria-disabled="true">
+        <rc-icon name="bell" [size]="20" />
+      </button>
       <div class="user">
         <span class="user__avatar" aria-hidden="true">{{ initials() }}</span>
         <span class="user__text">
@@ -47,7 +51,7 @@
       </div>
     </header>
 
-    <main class="content">
+    <main class="content" id="rc-main" tabindex="-1">
       <ng-content />
     </main>
   </div>
