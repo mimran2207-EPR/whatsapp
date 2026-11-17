@@ -87,10 +87,26 @@ public class SchemaConstraintTests(TestDatabase db) : IClassFixture<TestDatabase
     [Fact]
     public async Task Message_cannot_reference_a_campaign_of_another_tenant()
     {
-        var (_, c, r, cr) = await SeedAsync();
-        var other = Guid.NewGuid();
-        await db.Exec($"INSERT Tenant(tenant_id, name) VALUES ('{other}', N'רשות אחרת')");
-        await Assert.ThrowsAsync<SqlException>(() => InsertMessage(other, c, r, cr, "SMS", 1, $"k-{Guid.NewGuid()}"));
+        var (_, c, _, _) = await SeedAsync();
+        var (t2, _, r2, cr2) = await SeedAsync();
+        // Only the campaign belongs to another tenant; revision and recipient belong to t2.
+        var ex = await Assert.ThrowsAsync<SqlException>(() => InsertMessage(t2, c, r2, cr2, "SMS", 1, $"k-{Guid.NewGuid()}"));
+        Assert.Equal(547, ex.Number);
+        Assert.Contains("FK_Message_Campaign", ex.Message);
+    }
+
+    [Fact]
+    public async Task Document_cannot_reference_a_recipient_of_another_tenant()
+    {
+        var (_, _, _, cr) = await SeedAsync();
+        var (t2, c2, _, _) = await SeedAsync();
+        // Only the recipient belongs to another tenant; the campaign belongs to t2.
+        var ex = await Assert.ThrowsAsync<SqlException>(() => db.Exec($"""
+            INSERT Document(document_id, tenant_id, campaign_id, campaign_recipient_id, document_key, generation_state, recipient_match_state)
+            VALUES (NEWID(), '{t2}', '{c2}', '{cr}', 'INV-X', 'PLANNED', 'UNCHECKED');
+            """));
+        Assert.Equal(547, ex.Number);
+        Assert.Contains("FK_Document_Recipient", ex.Message);
     }
 
     [Fact]
