@@ -127,4 +127,93 @@ public class CampaignDetailTests(ApiFactory f) : IClassFixture<ApiFactory>
         Assert.DoesNotContain((await Json(await other.GetAsync("/v1/approvals/approved"))).EnumerateArray(),
             x => x.GetProperty("campaignId").GetGuid() == camp);
     }
+
+    // ---- fix round 2: masking by the same normalised source the renderer uses ----
+    [Fact] public async Task Preview_masks_a_name_that_is_over_200_chars_untrimmed_and_also_mapped_as_a_variable()
+    {
+        var dana = await f.LoginAs("dana");
+        var longName = "אבי " + new string('ל', 250) + " כהן";            // stored truncated to 200 in recipient_name, whole in the variable
+        var csv = "ת.ז,שם הורה,טל נייד הורה,שם ילד\n" + $"300000001,\"  {longName}  \",0521234567,נועה\n";
+        var mapping = new { idColumn = "ת.ז", nameColumn = "שם הורה", phoneColumn = "טל נייד הורה", variableColumns = new[] { "שם הורה", "שם ילד" } };
+        var imp = await dana.UploadImport(System.Text.Encoding.UTF8.GetBytes(csv), "ארוך.csv", mapping);
+        var camp = await dana.CreateCampaign("detail-long");
+        await dana.PatchDraft(camp, new { audienceVersionId = imp.AudienceVersionId, channel = "SMS", contentText = "שלום {שם הורה}, עבור {שם ילד}." });
+
+        var r = await dana.GetAsync($"/v1/campaigns/{camp}");
+        var raw = await r.Content.ReadAsStringAsync();
+        var p = (await Json(r)).GetProperty("preview");
+        Assert.Equal("שלום אבי ל., עבור נועה.", p.GetProperty("text").GetString());
+        Assert.Equal("אבי ל.", p.GetProperty("recipientName").GetString());
+        Assert.DoesNotContain("לללל", raw);
+        Assert.DoesNotContain("כהן", raw);
+    }
+
+    [Fact] public async Task Preview_never_shows_a_long_single_word_name_whole()
+    {
+        var dana = await f.LoginAs("dana");
+        var word = new string('מ', 300);
+        var csv = "ת.ז,שם הורה,טל נייד הורה\n" + $"300000002,{word},0521234568\n";
+        var imp = await dana.UploadImport(System.Text.Encoding.UTF8.GetBytes(csv), "מילה.csv",
+            new { idColumn = "ת.ז", nameColumn = "שם הורה", phoneColumn = "טל נייד הורה", variableColumns = new[] { "שם הורה" } });
+        var camp = await dana.CreateCampaign("detail-word");
+        await dana.PatchDraft(camp, new { audienceVersionId = imp.AudienceVersionId, channel = "SMS", contentText = "שלום {שם הורה}" });
+        var raw = await (await dana.GetAsync($"/v1/campaigns/{camp}")).Content.ReadAsStringAsync();
+        Assert.DoesNotContain(new string('מ', 60), raw);
+    }
+
+    // ---- fix round 2: reopen (withdraw the submission) ----
+    private static Task<HttpResponseMessage> Reopen(HttpClient c, Guid camp)
+        => c.SendWithKey(HttpMethod.Post, $"/v1/campaigns/{camp}/reopen", new { }, Guid.NewGuid().ToString());
+
+    [Fact] public async Task Reopen_returns_a_submitted_campaign_to_draft_and_it_can_be_submitted_again_unchanged()
+    {
+        var dana = await f.LoginAs("dana");
+        var (camp, _) = await Draft(dana, "g");
+        var first = await dana.Submit(camp);
+        var o = await Json(await Reopen(dana, camp));
+        Assert.False(o.GetProperty("approvalInvalidated").GetBoolean()); // nobody had approved yet
+        Assert.Equal("DRAFT", (await Json(await dana.GetAsync($"/v1/campaigns/{camp}"))).GetProperty("state").GetString());
+        Assert.NotEqual(first, await dana.Submit(camp)); // a new revision, so a new package hash
+    }
+
+    [Fact] public async Task Reopen_withdraws_an_approved_campaign_and_invalidates_the_approval()
+    {
+        var dana = await f.LoginAs("dana"); var meir = await f.LoginAs("meir");
+        var (camp, _) = await Draft(dana, "h");
+        var hash = await dana.Submit(camp);
+        await meir.Approve(camp, hash);
+        var o = await Json(await Reopen(dana, camp));
+        Assert.True(o.GetProperty("approvalInvalidated").GetBoolean());
+        Assert.Equal("DRAFT", (await Json(await dana.GetAsync($"/v1/campaigns/{camp}"))).GetProperty("state").GetString());
+        Assert.DoesNotContain((await Json(await meir.GetAsync("/v1/approvals/approved"))).EnumerateArray(), x => x.GetProperty("campaignId").GetGuid() == camp);
+        Assert.NotEqual(HttpStatusCode.Accepted, (await meir.ReleaseRaw(camp)).StatusCode); // not releasable any more
+        Assert.NotEqual(HttpStatusCode.OK, (await meir.ApproveRaw(camp, hash)).StatusCode);  // the old package cannot be approved
+    }
+
+    [Fact] public async Task Reopen_of_a_draft_is_a_no_op_and_of_a_released_campaign_is_refused()
+    {
+        var dana = await f.LoginAs("dana"); var meir = await f.LoginAs("meir");
+        var (draft, _) = await Draft(dana, "i");
+        Assert.Equal(HttpStatusCode.OK, (await Reopen(dana, draft)).StatusCode);
+
+        var (rel, _) = await Draft(dana, "j");
+        await meir.Approve(rel, await dana.Submit(rel));
+        await meir.Release(rel);
+        var r = await Reopen(dana, rel);
+        Assert.Equal(HttpStatusCode.Conflict, r.StatusCode);
+        Assert.Equal("ALREADY_RELEASED", await r.CodeOf());
+    }
+
+    [Fact] public async Task Reopen_is_role_and_tenant_checked()
+    {
+        var dana = await f.LoginAs("dana");
+        var (camp, _) = await Draft(dana, "k");
+        await dana.Submit(camp);
+        var rina = await f.LoginAs("rina"); // analyst
+        Assert.Equal(HttpStatusCode.Forbidden, (await Reopen(rina, camp)).StatusCode);
+        var tenant2 = Guid.NewGuid();
+        await f.Db.ExecAsync($"INSERT Tenant(tenant_id, name) VALUES ('{tenant2}', N'אחר'); INSERT TenantPolicy(tenant_id) VALUES ('{tenant2}');");
+        var other = f.ClientWith("eve", "creator", tenant2, "EDU");
+        Assert.Equal(HttpStatusCode.NotFound, (await Reopen(other, camp)).StatusCode);
+    }
 }

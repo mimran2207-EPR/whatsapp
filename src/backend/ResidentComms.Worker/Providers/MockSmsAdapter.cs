@@ -28,7 +28,7 @@ public sealed class MockSmsOptions
 }
 
 /// <summary>Simulated SMS provider. Everything it produces is sandbox data. Events go out through <see cref="IProviderEventPoster"/>.</summary>
-public sealed class MockSmsAdapter : ISmsAdapter
+public sealed class MockSmsAdapter : ISmsAdapter, IDisposable
 {
     private const int MinEventDelayMs = 300; // lets the dispatcher commit provider_message_id before the first event arrives
 
@@ -37,11 +37,19 @@ public sealed class MockSmsAdapter : ISmsAdapter
     private readonly ILogger<MockSmsAdapter>? _log;
     private readonly Random _rng;
     private readonly object _lock = new();
+    private readonly CancellationTokenSource _shutdown = new();
 
     public MockSmsAdapter(MockSmsOptions options, IProviderEventPoster poster, ILogger<MockSmsAdapter>? log = null)
     {
         _o = options; _poster = poster; _log = log;
         _rng = options.Seed is { } s ? new Random(s) : new Random();
+    }
+
+    /// <summary>Host shutdown: pending events and redeliveries stop (the DI container disposes the singleton on stop).</summary>
+    public void Dispose()
+    {
+        _shutdown.Cancel();
+        _shutdown.Dispose();
     }
 
     private double Roll() { lock (_lock) return _rng.NextDouble(); }
@@ -88,11 +96,12 @@ public sealed class MockSmsAdapter : ISmsAdapter
             {
                 try
                 {
-                    await Task.Delay(delay);
+                    await Task.Delay(delay, _shutdown.Token);
                     var body = JsonSerializer.Serialize(new { providerEventId = $"{pm}:{type}", providerMessageId = pm, type, occurredAt = DateTimeOffset.UtcNow });
                     await PostWithRetry(body, type, pm);
-                    if (dup) { await Task.Delay(100); await PostWithRetry(body, type, pm); }
+                    if (dup) { await Task.Delay(100, _shutdown.Token); await PostWithRetry(body, type, pm); }
                 }
+                catch (OperationCanceledException) { /* shutting down */ }
                 catch (Exception ex) { _log?.LogWarning(ex, "Mock provider could not deliver event {Type} for {Pm}", type, pm); }
             });
     }
@@ -107,17 +116,28 @@ public sealed class MockSmsAdapter : ISmsAdapter
         for (var attempt = 0; ; attempt++)
         {
             try { await Post(body); return; }
-            catch (Exception ex) when (attempt < _o.WebhookRetryDelaysMs.Length)
+            catch (Exception ex) when (attempt < _o.WebhookRetryDelaysMs.Length && Retryable(ex) && !_shutdown.IsCancellationRequested)
             {
                 _log?.LogInformation(ex, "Mock provider will redeliver event {Type} for {Pm} (attempt {Attempt})", type, pm, attempt + 2);
-                await Task.Delay(_o.WebhookRetryDelaysMs[attempt]);
+                await Task.Delay(_o.WebhookRetryDelaysMs[attempt], _shutdown.Token);
             }
         }
     }
 
+    /// <summary>
+    /// Redeliver on what a provider would: transport failures (no response), 422 (event not attributable yet), 408/429 and 5xx.
+    /// A definite client error (400, 401, ...) means the request itself is wrong; repeating it cannot help.
+    /// </summary>
+    private static bool Retryable(Exception ex) => ex switch
+    {
+        HttpRequestException { StatusCode: null } => true,
+        HttpRequestException { StatusCode: var c } => (int)c! is 422 or 408 or 429 or >= 500,
+        _ => false,
+    };
+
     private Task Post(string body)
     {
         var key = _o.SigningKey ?? throw new InvalidOperationException("Providers:MockSms:SigningKey is not configured.");
-        return _poster.PostAsync(body, MockSignature.Compute(key, Encoding.UTF8.GetBytes(body)), CancellationToken.None);
+        return _poster.PostAsync(body, MockSignature.Compute(key, Encoding.UTF8.GetBytes(body)), _shutdown.Token);
     }
 }

@@ -122,13 +122,17 @@ export class WizardComponent {
     if (id) void this.router.navigate(['/campaigns', id, 'tracking']);
   }
 
-  protected startEdit(): void {
+  protected async startEdit(): Promise<void> {
     if (!this.confirmEdit()) {
       this.confirmEdit.set(true);
       return;
     }
+    // The server withdraws the submission first; on refusal the draft stays locked and the error is shown.
+    const ok = await this.s.unlockForEdit();
     this.confirmEdit.set(false);
-    this.s.unlockForEdit();
+    if (ok) {
+      this.stepAnnouncement.set('ההגשה בוטלה. אפשר לערוך.');
+    }
   }
 
   protected canVisit(i: number): boolean {

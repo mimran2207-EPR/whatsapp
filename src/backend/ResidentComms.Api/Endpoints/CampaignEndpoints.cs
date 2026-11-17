@@ -70,6 +70,14 @@ public static class CampaignEndpoints
             return ApiResults.From(r, o => Results.Ok(new { revisionId = o.RevisionId, approvalInvalidated = o.ApprovalInvalidated }));
         });
 
+        // "עריכה" on a submitted campaign: withdraw the submission (and approval) on the server, back to DRAFT.
+        v1.MapPost("/campaigns/{id:guid}/reopen", async (Guid id, ICurrentUser user, CampaignRepository repo) =>
+        {
+            if (!ApiResults.CanAuthor(user)) return ApiResults.ForbiddenRole();
+            var r = await repo.ReopenAsync(user.TenantId, id);
+            return ApiResults.From(r, o => Results.Ok(new { revisionId = o.RevisionId, approvalInvalidated = o.ApprovalInvalidated }));
+        });
+
         v1.MapPost("/campaigns/{id:guid}/preflight", async (Guid id, ICurrentUser user, CampaignRepository repo) =>
         {
             if (!ApiResults.CanAuthor(user)) return ApiResults.ForbiddenRole();

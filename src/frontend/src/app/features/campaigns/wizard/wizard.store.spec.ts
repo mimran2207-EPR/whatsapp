@@ -194,13 +194,109 @@ describe('WizardStore', () => {
     ctrl.expectNone('/v1/campaigns/c1/preflight');
     expect(s.step()).toBe(2); // viewing is allowed
 
-    s.unlockForEdit();
+    const unlock = s.unlockForEdit();
+    await tick();
+    ctrl.expectOne('/v1/campaigns/c1/reopen').flush({ revisionId: 'rev2', approvalInvalidated: true }); // withdrawn on the server
+    expect(await unlock).toBe(true);
     expect(s.locked()).toBe(false);
+    expect(s.serverState()).toBe('DRAFT');
+    expect(s.approvalInvalidated()).toBe(true);
     const save = s.saveDraft();
     await tick();
-    ctrl.expectOne('/v1/campaigns/c1/draft').flush({ revisionId: 'rev2', approvalInvalidated: true });
+    ctrl.expectOne('/v1/campaigns/c1/draft').flush({ revisionId: 'rev2', approvalInvalidated: false });
     await save;
-    expect(s.approvalInvalidated()).toBe(true);
+  });
+
+  async function submitted(): Promise<void> {
+    await imported();
+    s.content.set('שלום');
+    s.preflight.set(preflight);
+    const done = s.submit();
+    await tick();
+    ctrl.expectOne('/v1/campaigns/c1/draft').flush({ revisionId: 'rev1', approvalInvalidated: false });
+    await tick();
+    ctrl.expectOne('/v1/campaigns/c1/submit').flush({ packageHash: 'h1' });
+    await done;
+  }
+
+  it('"עריכה" then submitting again without any change works: editing really withdrew the submission', async () => {
+    await submitted();
+    const unlock = s.unlockForEdit();
+    await tick();
+    ctrl.expectOne('/v1/campaigns/c1/reopen').flush({ revisionId: 'rev2', approvalInvalidated: false });
+    await unlock;
+
+    const again = s.submit();
+    await tick();
+    ctrl.expectNone('/v1/campaigns/c1/draft'); // nothing changed: no PATCH, and none is needed
+    ctrl.expectOne('/v1/campaigns/c1/submit').flush({ packageHash: 'h2' });
+    expect(await again).toBe(true);
+    expect(s.submittedHash()).toBe('h2');
+    expect(s.locked()).toBe(true);
+  });
+
+  it('stays locked and shows the error when the server refuses to reopen', async () => {
+    await submitted();
+    const unlock = s.unlockForEdit();
+    await tick();
+    ctrl.expectOne('/v1/campaigns/c1/reopen').flush({ code: 'ALREADY_RELEASED' }, { status: 409, statusText: 'x' });
+    expect(await unlock).toBe(false);
+    expect(s.locked()).toBe(true);
+    expect(s.error()?.messageHe).toBe('המשלוח כבר שוחרר לשליחה');
+  });
+
+  it('reuses the reopen key only after a failure with no response', async () => {
+    await submitted();
+    const a = s.unlockForEdit();
+    await tick();
+    const r1 = ctrl.expectOne('/v1/campaigns/c1/reopen');
+    const k1 = r1.request.headers.get('Idempotency-Key');
+    r1.error(new ProgressEvent('error'), { status: 0 });
+    await a;
+    const b = s.unlockForEdit();
+    await tick();
+    const r2 = ctrl.expectOne('/v1/campaigns/c1/reopen');
+    expect(r2.request.headers.get('Idempotency-Key')).toBe(k1);
+    r2.flush({ code: 'INVALID_STATE' }, { status: 409, statusText: 'x' });
+    await b;
+    const c = s.unlockForEdit();
+    await tick();
+    const r3 = ctrl.expectOne('/v1/campaigns/c1/reopen');
+    expect(r3.request.headers.get('Idempotency-Key')).not.toBe(k1); // a definite 409 ended that action
+    r3.flush({ revisionId: 'rev2', approvalInvalidated: false });
+    await c;
+  });
+
+  it('an in-flight preflight response is dropped when a later call returns early because the content was emptied', async () => {
+    await imported();
+    s.content.set('א');
+    const first = s.refreshPreflight();
+    await tick();
+    ctrl.expectOne('/v1/campaigns/c1/draft').flush({ revisionId: 'rev1', approvalInvalidated: false });
+    await tick();
+    const old = ctrl.expectOne('/v1/campaigns/c1/preflight');
+    s.content.set('');
+    await s.refreshPreflight(); // early return (empty content)
+    old.flush(preflight);
+    await first;
+    expect(s.preflight()).toBeNull();
+    expect(s.preflightPending()).toBe(false);
+  });
+
+  it('an in-flight preflight response is dropped when a later call returns early because the draft is locked', async () => {
+    await imported();
+    s.content.set('א');
+    const first = s.refreshPreflight();
+    await tick();
+    ctrl.expectOne('/v1/campaigns/c1/draft').flush({ revisionId: 'rev1', approvalInvalidated: false });
+    await tick();
+    const old = ctrl.expectOne('/v1/campaigns/c1/preflight');
+    s.locked.set(true);
+    await s.refreshPreflight(); // early return (locked)
+    old.flush(preflight);
+    await first;
+    expect(s.preflight()).toBeNull();
+    expect(s.preflightPending()).toBe(false);
   });
 
   it('resumes a draft from the server (another browser) and locks a submitted one', async () => {

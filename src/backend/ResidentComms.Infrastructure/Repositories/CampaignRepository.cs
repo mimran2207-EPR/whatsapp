@@ -92,6 +92,41 @@ public sealed class CampaignRepository(SqlConnectionFactory db, TimeProvider clo
         return OpResult<PatchOutcome>.Success(new PatchOutcome(revisionId, invalidated));
     }
 
+    /// <summary>
+    /// Withdraws a submission (and any approval): back to DRAFT on a new revision, the same way a material edit after submit does.
+    /// A DRAFT is left as is. A released campaign cannot be reopened.
+    /// </summary>
+    public async Task<OpResult<PatchOutcome>> ReopenAsync(Guid tenant, Guid campaignId)
+    {
+        var now = clock.GetUtcNow().UtcDateTime;
+        await using var c = await db.OpenAsync();
+        await using var tx = (SqlTransaction)await c.BeginTransactionAsync();
+        var camp = await CampaignQueries.LoadCampaignLockedAsync(c, tx, tenant, campaignId);
+        if (camp is null) return Fail<PatchOutcome>("NOT_FOUND");
+        if (camp.CampaignState == "RELEASED") return Fail<PatchOutcome>("ALREADY_RELEASED");
+        var rev = (await CampaignQueries.LoadCurrentRevisionAsync(c, tx, tenant, campaignId))!;
+        if (camp.CampaignState == "DRAFT") return OpResult<PatchOutcome>.Success(new PatchOutcome(rev.CampaignRevisionId, false));
+
+        var revisionId = Guid.NewGuid();
+        await c.ExecuteAsync(
+            @"INSERT CampaignRevision(campaign_revision_id, tenant_id, campaign_id, revision_no, audience_version_id, channel, content_text, field_defaults_json, scheduled_at)
+              VALUES (@revisionId, @tenant, @campaignId, @no, @audience, @channel, @content, @defaultsJson, @scheduled)",
+            new
+            {
+                revisionId, tenant, campaignId, no = rev.RevisionNo + 1, audience = rev.AudienceVersionId, channel = rev.Channel,
+                content = rev.ContentText, defaultsJson = rev.FieldDefaultsJson, scheduled = rev.ScheduledAt,
+            }, tx);
+        var invalidated = await c.ExecuteAsync(
+            @"UPDATE a SET invalidated_at = @now FROM Approval a
+              JOIN CampaignRevision r ON r.tenant_id = a.tenant_id AND r.campaign_revision_id = a.campaign_revision_id
+              WHERE a.tenant_id = @tenant AND r.campaign_id = @campaignId AND a.invalidated_at IS NULL",
+            new { now, tenant, campaignId }, tx) > 0;
+        await c.ExecuteAsync("UPDATE Campaign SET campaign_state = 'DRAFT', updated_at = @now WHERE tenant_id = @tenant AND campaign_id = @campaignId",
+            new { now, tenant, campaignId }, tx);
+        await tx.CommitAsync();
+        return OpResult<PatchOutcome>.Success(new PatchOutcome(revisionId, invalidated));
+    }
+
     private static DateTime TruncateMs(DateTime d) => new(d.Ticks - d.Ticks % TimeSpan.TicksPerMillisecond, DateTimeKind.Utc);
 
     public async Task<OpResult<PreflightReport>> PreflightAsync(Guid tenant, Guid campaignId)

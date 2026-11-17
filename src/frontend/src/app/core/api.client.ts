@@ -229,6 +229,15 @@ export class ApiClient {
     );
   }
 
+  /** Withdraw a submission (and approval): back to DRAFT on a new revision. */
+  reopen(campaignId: string, key?: string): Observable<{ revisionId: string; approvalInvalidated: boolean }> {
+    return this.http.post<{ revisionId: string; approvalInvalidated: boolean }>(
+      `/v1/campaigns/${encodeURIComponent(campaignId)}/reopen`,
+      {},
+      { context: this.ctx(key) },
+    );
+  }
+
   preflight(campaignId: string, key?: string): Observable<PreflightReport> {
     return this.http.post<PreflightReport>(`/v1/campaigns/${encodeURIComponent(campaignId)}/preflight`, {}, { context: this.ctx(key) });
   }

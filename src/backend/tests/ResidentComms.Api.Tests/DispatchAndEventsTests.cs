@@ -263,7 +263,7 @@ public class DispatchAndEventsTests(ApiFactory f) : IClassFixture<ApiFactory>
         public readonly List<string> Delivered = [];
         public Task PostAsync(string body, string signatureHex, CancellationToken ct)
         {
-            if (Interlocked.Increment(ref Calls) <= failures) throw new HttpRequestException("422 UNATTRIBUTABLE (event raced the provider id commit)");
+            if (Interlocked.Increment(ref Calls) <= failures) throw new HttpRequestException("422 UNATTRIBUTABLE (event raced the provider id commit)", null, HttpStatusCode.UnprocessableEntity);
             lock (Delivered) Delivered.Add(body);
             return Task.CompletedTask;
         }
@@ -304,5 +304,51 @@ public class DispatchAndEventsTests(ApiFactory f) : IClassFixture<ApiFactory>
             await Task.Delay(100);
         }
         Assert.Equal(expected, await f.Db.ScalarAsync<int>($"SELECT COUNT(*) FROM Message WHERE campaign_id = '{camp}' AND delivery_state = 'DELIVERED'"));
+    }
+
+    private sealed class StatusPoster(HttpStatusCode? status) : IProviderEventPoster
+    {
+        public int Calls;
+        public Task PostAsync(string body, string signatureHex, CancellationToken ct)
+        {
+            Interlocked.Increment(ref Calls);
+            throw new HttpRequestException("refused", null, status);
+        }
+    }
+
+    private async Task<int> CallsAfterAccept(StatusPoster poster)
+    {
+        var o = Options(seed: 5);
+        o.DeliverRate = 1; o.WebhookRetryDelaysMs = [30, 30, 30];
+        using var adapter = new MockSmsAdapter(o, poster);
+        await adapter.SendAsync(new SmsSendRequest(Guid.NewGuid(), "+972521234567", "x", "k"), CancellationToken.None);
+        await Task.Delay(1500);
+        return poster.Calls;
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.BadRequest)]
+    [InlineData(HttpStatusCode.Unauthorized)]
+    public async Task Mock_provider_does_not_retry_a_definite_client_error(HttpStatusCode status)
+        => Assert.Equal(2, await CallsAfterAccept(new StatusPoster(status))); // sent + delivered, one attempt each
+
+    [Fact] public async Task Mock_provider_retries_422_and_transport_failures_up_to_the_schedule()
+    {
+        Assert.Equal(2 * 4, await CallsAfterAccept(new StatusPoster(HttpStatusCode.UnprocessableEntity)));
+        Assert.Equal(2 * 4, await CallsAfterAccept(new StatusPoster(null)));
+    }
+
+    [Fact] public async Task Mock_provider_stops_redelivering_when_it_is_shut_down()
+    {
+        var p = new StatusPoster(HttpStatusCode.UnprocessableEntity);
+        var o = Options(seed: 6);
+        o.DeliverRate = 1; o.WebhookRetryDelaysMs = [400, 400, 400, 400];
+        var adapter = new MockSmsAdapter(o, p);
+        await adapter.SendAsync(new SmsSendRequest(Guid.NewGuid(), "+972521234567", "x", "k"), CancellationToken.None);
+        await Task.Delay(700); // first attempts made, waiting to retry
+        var before = p.Calls;
+        adapter.Dispose();
+        await Task.Delay(1500);
+        Assert.Equal(before, p.Calls);
     }
 }

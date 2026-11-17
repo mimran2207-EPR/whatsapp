@@ -121,6 +121,29 @@ describe('ApprovalsComponent', () => {
     await flushLists(f, [], [approved]);
   });
 
+  it('approve succeeded, then the release got no response: retry calls release only, with the same key, and reaches tracking', async () => {
+    const f = await setup();
+    const nav = vi.spyOn(TestBed.inject(Router), 'navigate').mockResolvedValue(true);
+    primary(f.nativeElement).click();
+    ctrl.expectOne('/v1/campaigns/c1/approve').flush({ approvalId: 'a1' });
+    await f.whenStable();
+    const r1 = ctrl.expectOne('/v1/campaigns/c1/release');
+    const key = r1.request.headers.get('Idempotency-Key');
+    r1.error(new ProgressEvent('error'), { status: 0 });
+    await f.whenStable();
+    f.detectChanges();
+    ctrl.expectNone('/v1/approvals'); // no response means nothing is known: no reload needed
+    expect(primary(f.nativeElement).textContent!.trim()).toBe('שליחת 1,250 הודעות'); // already approved: release only
+
+    primary(f.nativeElement).click();
+    ctrl.expectNone('/v1/campaigns/c1/approve');
+    const r2 = ctrl.expectOne('/v1/campaigns/c1/release');
+    expect(r2.request.headers.get('Idempotency-Key')).toBe(key);
+    r2.flush({ messagesCreated: 1250, suppressed: 0, environment: 'sandbox-mock' }, { status: 202, statusText: 'Accepted' });
+    await f.whenStable();
+    expect(nav).toHaveBeenCalledWith(['/campaigns', 'c1', 'tracking']);
+  });
+
   it('reuses the key only when the release got no response (network error)', async () => {
     const f = await setup([], [approved]);
     const nav = vi.spyOn(TestBed.inject(Router), 'navigate').mockResolvedValue(true);

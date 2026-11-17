@@ -100,7 +100,7 @@ export class WizardStore {
   readonly busy = signal(false);
   readonly error = signal<ApiError | null>(null);
 
-  private readonly keys = { create: new ActionKey(), import: new ActionKey(), patch: new ActionKey(), preflight: new ActionKey(), submit: new ActionKey() };
+  private readonly keys = { create: new ActionKey(), import: new ActionKey(), patch: new ActionKey(), preflight: new ActionKey(), submit: new ActionKey(), reopen: new ActionKey() };
   private saving: Promise<unknown> = Promise.resolve();
   private lastSaved: string | null = null;
   /** The server holds a schedule for this revision: choosing "מיד" must send an explicit null to clear it. */
@@ -213,11 +213,32 @@ export class WizardStore {
     }
   }
 
-  /** Editing after submit cancels the submission: the next PATCH creates a new revision and invalidates any approval. */
-  unlockForEdit(): void {
-    if (this.serverState() === 'RELEASED') return;
-    this.locked.set(false);
-    this.submittedHash.set(null);
+  /**
+   * "עריכה" on a submitted campaign really withdraws it on the server (POST /reopen: back to DRAFT on a new revision, any
+   * approval invalidated) before the inputs unlock. If the server refuses, the draft stays locked and the error is shown.
+   * An unchanged draft can then be submitted again straight away.
+   */
+  async unlockForEdit(): Promise<boolean> {
+    const id = this.campaignId();
+    if (!id || this.serverState() === 'RELEASED') return false;
+    if (this.busy()) return false;
+    this.busy.set(true);
+    this.error.set(null);
+    try {
+      const r = await firstValueFrom(this.api.reopen(id, this.keys.reopen.for(id)));
+      this.keys.reopen.settle();
+      if (r.approvalInvalidated) this.approvalInvalidated.set(true);
+      this.serverState.set('DRAFT');
+      this.submittedHash.set(null);
+      this.locked.set(false);
+      return true;
+    } catch (e) {
+      this.keys.reopen.fail(e);
+      this.error.set(apiError(e));
+      return false;
+    } finally {
+      this.busy.set(false);
+    }
   }
 
   /* ---------- Step 1: file and mapping ---------- */
@@ -357,12 +378,17 @@ export class WizardStore {
    */
   async refreshPreflight(): Promise<void> {
     const id = this.campaignId();
-    if (this.locked()) return;
-    if (!id || !this.summary() || !this.content().trim()) {
-      this.preflight.set(null);
+    // Every call (including an early return) supersedes whatever is still in flight, so an older response can never overwrite it.
+    const seq = ++this.preflightSeq;
+    if (this.locked()) {
+      this.preflightPending.set(false);
       return;
     }
-    const seq = ++this.preflightSeq;
+    if (!id || !this.summary() || !this.content().trim()) {
+      this.preflight.set(null);
+      this.preflightPending.set(false);
+      return;
+    }
     this.preflightPending.set(true);
     try {
       await this.saveDraft();

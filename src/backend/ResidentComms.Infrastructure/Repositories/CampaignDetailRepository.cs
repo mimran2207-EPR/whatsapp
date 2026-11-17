@@ -62,11 +62,12 @@ public sealed class CampaignDetailRepository(SqlConnectionFactory db)
                       ORDER BY m.source_row_number", new { tenant, av });
                 if (first is not null)
                 {
-                    var masked = IdentityMask.MaskName(first.RecipientName);
-                    // The name column is stored as a variable too: show it masked, like everywhere else in the API.
+                    var masked = SafeName(first.RecipientName);
+                    // The name column is also stored as a variable (raw cell: untrimmed, not truncated to 200). Substitute the masked
+                    // value for it BEFORE rendering, matching on the normalised text, so the rendered message never carries the raw name.
                     var values = CampaignQueries.ParseVariables(first.VariablesJson).ToDictionary(
                         kv => kv.Key,
-                        kv => first.RecipientName is not null && kv.Value == first.RecipientName ? masked : kv.Value);
+                        kv => IsNameValue(kv.Value, first.RecipientName) ? SafeName(kv.Value) : kv.Value);
                     var r = TemplateRenderer.Render(rev.ContentText, values, rev.Defaults);
                     preview = new CampaignPreviewDto(masked, PhoneMask.Mask(first.PhoneNormalized), r.Text, r.MissingFields);
                 }
@@ -75,6 +76,29 @@ public sealed class CampaignDetailRepository(SqlConnectionFactory db)
 
         return new CampaignDetail(campaignId, head.Name, head.Purpose, head.State, head.CreatedBy, rev.CampaignRevisionId, rev.RevisionNo,
             rev.Channel, rev.ContentText, rev.Defaults, rev.ScheduledAtUtc, audience, preview);
+    }
+
+    private static string Normalize(string s) => System.Text.RegularExpressions.Regex.Replace(s.Trim(), @"\s+", " ");
+
+    /// <summary>
+    /// True when a variable value is the recipient's name: equal after trimming and collapsing whitespace, or, because
+    /// recipient_name is cut at 200 characters while the variable is not, when the variable starts with the stored (cut) name.
+    /// </summary>
+    internal static bool IsNameValue(string? value, string? recipientName)
+    {
+        if (string.IsNullOrWhiteSpace(value) || string.IsNullOrWhiteSpace(recipientName)) return false;
+        var v = Normalize(value); var n = Normalize(recipientName);
+        return v == n || (recipientName.Length >= 200 && v.StartsWith(n, StringComparison.Ordinal));
+    }
+
+    private const int MaxMaskedNameLength = 24;
+
+    /// <summary>IdentityMask.MaskName on the normalised value, capped so a single very long word is never shown whole.</summary>
+    internal static string? SafeName(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return name;
+        var m = IdentityMask.MaskName(Normalize(name))!;
+        return m.Length <= MaxMaskedNameLength ? m : m[..MaxMaskedNameLength] + "…";
     }
 
     private sealed record ApprovedRow(Guid CampaignId, string Name, string Purpose, string CreatedBy, string? Channel, int Recipients, string DecidedBy, DateTime DecidedAt);

@@ -111,6 +111,24 @@ export class ApprovalsComponent {
     });
   }
 
+  private markApproved(p: ApprovalListItem): void {
+    this.items.update((l) => (l ?? []).filter((x) => x.campaignId !== p.campaignId));
+    this.ready.update((l) => [
+      ...l.filter((x) => x.campaignId !== p.campaignId),
+      {
+        campaignId: p.campaignId,
+        name: p.name,
+        purpose: p.purpose,
+        submittedBy: p.submittedBy,
+        channel: p.channel,
+        recipients: p.recipients,
+        approvedBy: this.auth.user()?.id ?? '',
+        approvedAt: new Date().toISOString(),
+      },
+    ]);
+    this.picked.set(p.campaignId);
+  }
+
   protected select(id: string): void {
     if (this.busy()) return;
     this.picked.set(id);
@@ -129,6 +147,9 @@ export class ApprovalsComponent {
         const hash = s.item.packageHash;
         await firstValueFrom(this.api.approve(id, hash, this.approveKey.for(id + '|' + hash)));
         this.approveKey.settle();
+        // Approved for good: from here on this campaign is a release-only item, so any retry (e.g. after a release that got no
+        // response) goes straight to release and never through approve again.
+        this.markApproved(s.item);
       }
       step = 'release';
       await firstValueFrom(this.api.release(id, this.releaseKey.for(id)));
