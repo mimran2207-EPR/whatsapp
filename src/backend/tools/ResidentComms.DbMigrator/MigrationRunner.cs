@@ -6,8 +6,9 @@ namespace ResidentComms.DbMigrator;
 /// <summary>Creates the database if missing and applies db/migrations/V*.sql not yet recorded in SchemaVersion.</summary>
 public sealed class MigrationRunner(string server, string database, string migrationsDir)
 {
-    public static bool IsAllowedDatabase(string name) =>
-        name == "whatsapp" || name.StartsWith("ResidentComms_", StringComparison.Ordinal);
+    private static readonly Regex AllowedName = new(@"^(whatsapp|ResidentComms_[A-Za-z0-9_]{1,100})$", RegexOptions.CultureInvariant);
+
+    public static bool IsAllowedDatabase(string name) => AllowedName.IsMatch(name);
 
     private static readonly Regex GoLine = new(@"^\s*GO\s*$", RegexOptions.Multiline | RegexOptions.IgnoreCase);
 
@@ -28,7 +29,8 @@ public sealed class MigrationRunner(string server, string database, string migra
         await using (var master = new SqlConnection(ConnectionString(null)))
         {
             await master.OpenAsync();
-            var cmd = new SqlCommand($"IF DB_ID(@db) IS NULL CREATE DATABASE [{database}]", master);
+            var cmd = new SqlCommand(
+                "IF DB_ID(@db) IS NULL BEGIN DECLARE @sql nvarchar(max) = N'CREATE DATABASE ' + QUOTENAME(@db); EXEC sp_executesql @sql; END", master);
             cmd.Parameters.AddWithValue("@db", database);
             await cmd.ExecuteNonQueryAsync();
         }

@@ -23,6 +23,8 @@ if (database is null)
 
 try
 {
+    if (seedDev && database != "whatsapp")
+        throw new InvalidOperationException("--seed-dev is allowed only on database 'whatsapp'.");
     var runner = new MigrationRunner(server, database, MigrationRunner.FindRepoDir(Path.Combine("db", "migrations")));
     var applied = await runner.MigrateAsync();
     Console.WriteLine(applied.Count == 0 ? "up to date" : "applied: " + string.Join(", ", applied));
