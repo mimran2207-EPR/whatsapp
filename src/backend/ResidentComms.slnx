@@ -3,10 +3,12 @@
     <Project Path="tools/ResidentComms.DbMigrator/ResidentComms.DbMigrator.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/ResidentComms.Api.Tests/ResidentComms.Api.Tests.csproj" />
     <Project Path="tests/ResidentComms.Db.Tests/ResidentComms.Db.Tests.csproj" />
     <Project Path="tests/ResidentComms.Domain.Tests/ResidentComms.Domain.Tests.csproj" />
     <Project Path="tests/ResidentComms.Infrastructure.Tests/ResidentComms.Infrastructure.Tests.csproj" />
   </Folder>
+  <Project Path="ResidentComms.Api/ResidentComms.Api.csproj" />
   <Project Path="ResidentComms.Domain/ResidentComms.Domain.csproj" />
   <Project Path="ResidentComms.Infrastructure/ResidentComms.Infrastructure.csproj" />
 </Solution>
