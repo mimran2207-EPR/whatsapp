@@ -22,6 +22,8 @@ builder.Services.AddSingleton<ImportLimits>();
 builder.Services.AddSingleton<AudienceRepository>();
 builder.Services.AddSingleton<CampaignRepository>();
 builder.Services.AddSingleton<ReleaseService>();
+builder.Services.AddSingleton<ResidentComms.Infrastructure.Events.ProviderEventProcessor>();
+builder.Services.AddSingleton<TrackingQueries>();
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<ICurrentUser, CurrentUser>();
 
@@ -90,6 +92,8 @@ if (app.Environment.IsDevelopment()) app.MapDev();
 var v1 = app.MapGroup("/v1").AddEndpointFilter<IdempotencyFilter>();
 v1.MapImports();
 v1.MapCampaigns();
+v1.MapProviderEvents();
+v1.MapTracking();
 
 app.Run();
 

@@ -9,6 +9,7 @@
 
   <ItemGroup>
     <ProjectReference Include="../../ResidentComms.Api/ResidentComms.Api.csproj" />
+    <ProjectReference Include="../../ResidentComms.Worker/ResidentComms.Worker.csproj" />
   </ItemGroup>
 
   <ItemGroup>

@@ -23,6 +23,7 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
 
     // Test-only key (not a secret): satisfies the >= 32 byte requirement.
     public const string TestSigningKey = "test-only-signing-key-0123456789-abcdefghijklmnop";
+    public const string TestMockSmsKey = "test-only-mock-sms-key-0123456789-abcdefghijklmnop";
 
     private static readonly string ServerCs =
         Environment.GetEnvironmentVariable("RESIDENTCOMMS_SQL")
@@ -60,6 +61,7 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
         builder.UseEnvironment("Development");
         builder.UseSetting("ConnectionStrings:Default", DbCs);
         builder.UseSetting("Auth:DevSigningKey", TestSigningKey);
+        builder.UseSetting("Providers:MockSms:SigningKey", TestMockSmsKey);
         builder.ConfigureTestServices(s => s.AddSingleton<TimeProvider>(Clock));
     }
 

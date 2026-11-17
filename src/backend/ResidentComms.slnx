@@ -10,5 +10,6 @@
   </Folder>
   <Project Path="ResidentComms.Api/ResidentComms.Api.csproj" />
   <Project Path="ResidentComms.Domain/ResidentComms.Domain.csproj" />
+  <Project Path="ResidentComms.Worker/ResidentComms.Worker.csproj" />
   <Project Path="ResidentComms.Infrastructure/ResidentComms.Infrastructure.csproj" />
 </Solution>
