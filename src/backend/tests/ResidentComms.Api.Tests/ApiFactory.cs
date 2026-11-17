@@ -5,6 +5,8 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Data.SqlClient;
 using ResidentComms.Infrastructure.Sql;
 
@@ -24,6 +26,9 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
 
     public string DatabaseName { get; } = $"ResidentComms_Test_{Guid.NewGuid():N}";
     public TestDb Db { get; private set; } = null!;
+
+    /// <summary>Fixed clock: 2026-11-17 10:00 Asia/Jerusalem (08:00Z), inside the default 08:00-20:00 send window. Tests may move it.</summary>
+    public FixedTimeProvider Clock { get; } = new(DateTimeOffset.Parse("2026-11-17T08:00:00Z"));
 
     private string DbCs => new SqlConnectionStringBuilder(ServerCs) { InitialCatalog = DatabaseName }.ConnectionString;
 
@@ -51,6 +56,7 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
         builder.UseEnvironment("Development");
         builder.UseSetting("ConnectionStrings:Default", DbCs);
         builder.UseSetting("Auth:DevSigningKey", TestSigningKey);
+        builder.ConfigureTestServices(s => s.AddSingleton<TimeProvider>(Clock));
     }
 
     public async Task<HttpClient> LoginAs(string userId)
@@ -96,4 +102,10 @@ public static class HttpClientExtensions
         if (key is not null) req.Headers.Add("Idempotency-Key", key);
         return c.SendAsync(req);
     }
+}
+
+public sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider
+{
+    public DateTimeOffset Now { get; set; } = now;
+    public override DateTimeOffset GetUtcNow() => Now;
 }

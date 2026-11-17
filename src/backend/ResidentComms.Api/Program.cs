@@ -5,6 +5,8 @@ using Microsoft.IdentityModel.Tokens;
 using ResidentComms.Api.Auth;
 using ResidentComms.Api.Endpoints;
 using ResidentComms.Api.Idempotency;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using ResidentComms.Infrastructure.Repositories;
 using ResidentComms.Infrastructure.Sql;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -15,6 +17,10 @@ builder.Services.AddSingleton(sp => new SqlConnectionFactory(
     sp.GetRequiredService<IConfiguration>().GetConnectionString("Default")
     ?? throw new InvalidOperationException("ConnectionStrings:Default is not configured.")));
 builder.Services.AddSingleton<IdempotencyStore>();
+builder.Services.TryAddSingleton(TimeProvider.System);
+builder.Services.AddSingleton<AudienceRepository>();
+builder.Services.AddSingleton<CampaignRepository>();
+builder.Services.AddSingleton<ReleaseService>();
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<ICurrentUser, CurrentUser>();
 
@@ -81,6 +87,7 @@ app.MapGet("/health", () => Results.Ok(new { status = "ok", environment = "sandb
 if (app.Environment.IsDevelopment()) app.MapDev();
 
 var v1 = app.MapGroup("/v1").AddEndpointFilter<IdempotencyFilter>();
+v1.MapImports();
 v1.MapCampaigns();
 
 app.Run();
