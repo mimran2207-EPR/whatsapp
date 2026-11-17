@@ -1,20 +1,26 @@
 import { booleanAttribute, ChangeDetectionStrategy, Component, input } from '@angular/core';
+import { IconComponent } from '../icon/icon.component';
 
 export type Density = 'comfortable' | 'compact';
 
-/** Data grid row (Figma 8:252). Cells are projected; in RTL the first cell sits on the right (start) edge. */
+/**
+ * Data row visual (Figma 8:252). Cells are projected; in RTL the first cell sits on the right (start) edge.
+ * It carries no grid/table ARIA itself: the feature's table or grid container owns the semantics.
+ * Selection is shown by colour plus a check icon and a "נבחר" text, so it is not colour-only.
+ */
 @Component({
   selector: 'rc-grid-row',
+  imports: [IconComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <div
-      class="row"
-      role="row"
-      [attr.data-density]="density()"
-      [attr.aria-selected]="selected()"
-      [class.row--selected]="selected()"
-    >
+    <div class="row" [attr.data-density]="density()" [class.row--selected]="selected()">
       <ng-content />
+      @if (selected()) {
+        <span class="row__selected">
+          <rc-icon name="check" [size]="16" />
+          <span class="visually-hidden">נבחר</span>
+        </span>
+      }
     </div>
   `,
   styles: `
@@ -51,6 +57,26 @@ export type Density = 'comfortable' | 'compact';
     }
     .row[data-density='compact'].row--selected {
       background: var(--color-bg-subtle);
+    }
+    .row__selected {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      margin-inline-start: auto;
+      inline-size: 24px;
+      block-size: 24px;
+      flex: none;
+      border-radius: var(--radius-full);
+      background: var(--color-bg-brand);
+      color: var(--color-text-on-action);
+    }
+    .visually-hidden {
+      position: absolute;
+      inline-size: 1px;
+      block-size: 1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
     }
   `,
 })

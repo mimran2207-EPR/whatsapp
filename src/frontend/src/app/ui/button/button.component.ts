@@ -9,11 +9,14 @@ let nextId = 0;
   selector: 'rc-button',
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
+    <!-- With a reason: aria-disabled keeps it focusable so keyboard users reach the reason; clicks are swallowed. -->
     <button
       [type]="type()"
       [class]="'btn btn--' + variant()"
-      [disabled]="disabled()"
+      [disabled]="disabled() && !hasReason()"
+      [attr.aria-disabled]="hasReason() ? 'true' : null"
       [attr.aria-describedby]="hasReason() ? reasonId : null"
+      (click)="guard($event)"
     >
       <ng-content />
     </button>
@@ -51,7 +54,7 @@ let nextId = 0;
       color: var(--color-text-on-action);
       box-shadow: var(--shadow-brand-button);
     }
-    .btn--primary:hover:not(:disabled) {
+    .btn--primary:hover:not(:disabled, [aria-disabled='true']) {
       background: var(--color-bg-brand-hover);
     }
     .btn--secondary {
@@ -59,8 +62,8 @@ let nextId = 0;
       border-color: var(--color-border-default);
       color: var(--color-text-link);
     }
-    .btn--secondary:hover:not(:disabled),
-    .btn--ghost:hover:not(:disabled) {
+    .btn--secondary:hover:not(:disabled, [aria-disabled='true']),
+    .btn--ghost:hover:not(:disabled, [aria-disabled='true']) {
       background: var(--color-bg-subtle);
     }
     .btn--ghost {
@@ -71,17 +74,22 @@ let nextId = 0;
       background: var(--color-status-danger-bg);
       color: var(--color-status-danger-fg);
     }
-    .btn--danger:hover:not(:disabled) {
+    .btn--danger:hover:not(:disabled, [aria-disabled='true']) {
       border-color: var(--color-status-danger-fg);
     }
-    .btn:disabled {
+    .btn:disabled,
+    .btn[aria-disabled='true'] {
       background: var(--color-bg-muted);
       border-color: transparent;
       box-shadow: none;
       color: var(--color-text-disabled);
       cursor: not-allowed;
     }
-    .btn--ghost:disabled {
+    .btn[aria-disabled='true']:focus-visible {
+      box-shadow: var(--shadow-focus-ring);
+    }
+    .btn--ghost:disabled,
+    .btn--ghost[aria-disabled='true'] {
       background: transparent;
     }
     .visually-hidden {
@@ -102,4 +110,11 @@ export class ButtonComponent {
 
   protected readonly reasonId = `rc-btn-reason-${nextId++}`;
   protected readonly hasReason = computed(() => this.disabled() && !!this.disabledReason());
+
+  protected guard(ev: Event): void {
+    if (this.hasReason()) {
+      ev.preventDefault();
+      ev.stopImmediatePropagation();
+    }
+  }
 }

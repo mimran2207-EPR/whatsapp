@@ -14,6 +14,15 @@ describe('StepItem', () => {
     expect(el.textContent).toContain('מה');
   });
 
+  it('omits the "שלב N," prefix from the hidden text when index is null', () => {
+    const f = TestBed.createComponent(StepItemComponent);
+    f.componentRef.setInput('state', 'done');
+    f.componentRef.setInput('label', 'מי');
+    f.detectChanges();
+    const hidden: HTMLElement = f.nativeElement.querySelector('.visually-hidden');
+    expect(hidden.textContent!.trim()).toBe('הושלם');
+  });
+
   it('does not set aria-current on other states and shows an icon for done/blocked/invalidated', () => {
     for (const state of ['done', 'blocked', 'invalidated'] as const) {
       const f = TestBed.createComponent(StepItemComponent);

@@ -117,8 +117,8 @@
   box-shadow: var(--shadow-card);
   color: var(--color-icon-default);
 }
-.search:focus-within {
-  border-color: var(--color-border-focus);
+.search:has(:focus-visible) {
+  box-shadow: var(--shadow-focus-ring);
 }
 .search input {
   flex: 1;

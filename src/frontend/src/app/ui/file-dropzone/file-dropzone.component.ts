@@ -81,6 +81,8 @@ import { IconComponent } from '../icon/icon.component';
 })
 export class FileDropzoneComponent {
   readonly accept = input('.xlsx,.csv');
+  /** Client-side size limit (bytes). The server enforces its own limit too. */
+  readonly maxBytes = input(25 * 1024 * 1024);
   readonly title = input('גררו קובץ לכאן או בחרו קובץ');
   readonly hint = input('XLSX או CSV · עד 25MB · מאקרו ונוסחאות לא מורצים');
   readonly file = output<File>();
@@ -114,6 +116,11 @@ export class FileDropzoneComponent {
     const name = f.name.toLowerCase();
     if (allowed.length > 0 && !allowed.some((ext) => name.endsWith(ext))) {
       this.error.set(`סוג הקובץ אינו נתמך. אפשר להעלות: ${allowed.join(', ')}`);
+      return;
+    }
+    if (f.size > this.maxBytes()) {
+      const mb = Math.round((this.maxBytes() / (1024 * 1024)) * 10) / 10;
+      this.error.set(`הקובץ גדול מדי. הגודל המרבי: ${mb}MB`);
       return;
     }
     this.error.set(null);

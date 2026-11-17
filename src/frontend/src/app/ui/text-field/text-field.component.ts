@@ -21,10 +21,11 @@ let nextId = 0;
   encapsulation: ViewEncapsulation.None,
   template: `
     <div class="rc-tf" [class.rc-tf--error]="!!error()">
-      <label class="rc-tf__label" [attr.for]="controlId">{{ label() }}</label>
+      <!-- "for" is wired imperatively in ngAfterViewChecked (the projected control may bring its own id). -->
+      <label class="rc-tf__label">{{ label() }}</label>
       <div class="rc-tf__box"><ng-content /></div>
       @if (error()) {
-        <span class="rc-tf__error" [id]="errorId">{{ error() }}</span>
+        <span class="rc-tf__error" aria-live="polite" [id]="errorId">{{ error() }}</span>
       } @else if (helper()) {
         <span class="rc-tf__helper" [id]="helperId">{{ helper() }}</span>
       }
@@ -95,17 +96,17 @@ export class TextFieldComponent implements AfterViewChecked {
 
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
   private readonly uid = nextId++;
-  protected controlId = `rc-tf-${this.uid}`;
+  private readonly fallbackId = `rc-tf-${this.uid}`;
   protected readonly errorId = `rc-tf-${this.uid}-error`;
   protected readonly helperId = `rc-tf-${this.uid}-helper`;
 
+  // DOM-only wiring: nothing here feeds a template binding, so it cannot trigger NG0100.
   ngAfterViewChecked(): void {
     const control = this.host.nativeElement.querySelector<HTMLElement>('.rc-tf__box > input, .rc-tf__box > textarea, .rc-tf__box > select');
     const label = this.host.nativeElement.querySelector<HTMLLabelElement>('.rc-tf__label');
     if (!control || !label) return;
-    if (control.id) this.controlId = control.id;
-    else control.id = this.controlId;
-    label.htmlFor = control.id;
+    if (!control.id) control.id = this.fallbackId;
+    if (label.htmlFor !== control.id) label.htmlFor = control.id;
 
     const describedBy = this.error() ? this.errorId : this.helper() ? this.helperId : null;
     if (describedBy) control.setAttribute('aria-describedby', describedBy);

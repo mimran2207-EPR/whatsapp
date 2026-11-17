@@ -1,5 +1,6 @@
-import { Component, signal } from '@angular/core';
+import { ChangeDetectorRef, Component, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
+import { By } from '@angular/platform-browser';
 import { TextFieldComponent } from './text-field.component';
 
 @Component({
@@ -9,6 +10,50 @@ import { TextFieldComponent } from './text-field.component';
 class Host {
   error = signal<string | null>(null);
 }
+
+@Component({
+  imports: [TextFieldComponent],
+  template: `<rc-text-field label="שם" helper="עזרה"><input id="name" /></rc-text-field>`,
+})
+class OwnIdHost {}
+
+@Component({
+  imports: [TextFieldComponent],
+  template: `<rc-text-field label="א" helper="עזרה א"><input /></rc-text-field>
+    <rc-text-field label="ב" helper="עזרה ב"><input /></rc-text-field>`,
+})
+class TwoHost {}
+
+describe('TextField (fix round 1)', () => {
+  it('keeps the projected input id without NG0100 and points the label at it', () => {
+    const f = TestBed.createComponent(OwnIdHost);
+    expect(() => {
+      f.detectChanges();
+      // Force the OnPush field to be re-checked by the dev-mode no-changes pass.
+      f.debugElement.query(By.directive(TextFieldComponent)).injector.get(ChangeDetectorRef).markForCheck();
+      f.checkNoChanges();
+    }).not.toThrow();
+    const label: HTMLLabelElement = f.nativeElement.querySelector('label');
+    expect(f.nativeElement.querySelector('input').id).toBe('name');
+    expect(label.getAttribute('for')).toBe('name');
+  });
+
+  it('announces the error politely', () => {
+    const f = TestBed.createComponent(Host);
+    f.componentInstance.error.set('שדה חובה');
+    f.detectChanges();
+    const err: HTMLElement = f.nativeElement.querySelector('.rc-tf__error');
+    expect(err.getAttribute('aria-live')).toBe('polite');
+  });
+
+  it('gives two instances distinct ids', () => {
+    const f = TestBed.createComponent(TwoHost);
+    f.detectChanges();
+    const [a, b] = [...f.nativeElement.querySelectorAll('input')] as HTMLInputElement[];
+    expect(a.id).not.toBe(b.id);
+    expect(a.getAttribute('aria-describedby')).not.toBe(b.getAttribute('aria-describedby'));
+  });
+});
 
 describe('TextField', () => {
   it('links the label and the error to the projected input', () => {

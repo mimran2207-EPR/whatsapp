@@ -37,7 +37,7 @@ const STATE_TEXT: Record<StepState, string> = {
       @if (hint()) {
         <span class="step__hint">{{ hint() }}</span>
       }
-      <span class="visually-hidden">שלב {{ index() }}, {{ stateText() }}</span>
+      <span class="visually-hidden">{{ hiddenText() }}</span>
     </div>
   `,
   styles: `
@@ -107,5 +107,9 @@ export class StepItemComponent {
   readonly hint = input<string | null>(null);
 
   protected readonly icon = computed(() => STATE_ICON[this.state()] ?? null);
-  protected readonly stateText = computed(() => STATE_TEXT[this.state()]);
+  protected readonly hiddenText = computed(() => {
+    const i = this.index();
+    const s = STATE_TEXT[this.state()];
+    return i === null || i === undefined ? s : `שלב ${i}, ${s}`;
+  });
 }
