@@ -8,7 +8,7 @@ public enum ClaimOutcome : byte { New = 0, Replay = 1, Conflict = 2 }
 public sealed record StoredResponse(int? ResponseStatus, string? ResponseBody);
 
 /// <summary>Thin wrapper over dbo.usp_ClaimIdempotencyKey / usp_SetIdempotencyResult / usp_ReleaseIdempotencyKey.</summary>
-public sealed class IdempotencyStore(SqlConnectionFactory db)
+public class IdempotencyStore(SqlConnectionFactory db)
 {
     private static DbString Ansi(string v) => new() { Value = v, IsAnsi = true };
 
@@ -25,16 +25,16 @@ public sealed class IdempotencyStore(SqlConnectionFactory db)
         return (ClaimOutcome)p.Get<byte>("@Outcome");
     }
 
-    public async Task<StoredResponse> GetResultAsync(Guid tenantId, string operationType, string key)
+    public virtual async Task<StoredResponse?> GetResultAsync(Guid tenantId, string operationType, string key)
     {
         await using var c = await db.OpenAsync();
-        return await c.QuerySingleAsync<StoredResponse>(
+        return await c.QuerySingleOrDefaultAsync<StoredResponse>(
             @"SELECT response_status AS ResponseStatus, response_body AS ResponseBody
               FROM IdempotencyRecord WHERE tenant_id = @tenantId AND operation_type = @operationType AND idempotency_key = @key",
             new { tenantId, operationType = Ansi(operationType), key = Ansi(key) });
     }
 
-    public async Task SetResultAsync(Guid tenantId, string operationType, string key, int status, string body)
+    public virtual async Task SetResultAsync(Guid tenantId, string operationType, string key, int status, string body)
     {
         await using var c = await db.OpenAsync();
         await c.ExecuteAsync("dbo.usp_SetIdempotencyResult",

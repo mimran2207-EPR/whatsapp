@@ -9,7 +9,7 @@ namespace ResidentComms.Api.Idempotency;
 /// Endpoint filter for POST/PUT/PATCH under /v1 (except /v1/dev/* and /v1/provider-events/*).
 /// Requires an Idempotency-Key header, claims it through dbo.usp_ClaimIdempotencyKey, and replays the stored response.
 /// </summary>
-public sealed class IdempotencyFilter(IdempotencyStore store, ICurrentUser user) : IEndpointFilter
+public sealed class IdempotencyFilter(IdempotencyStore store, ICurrentUser user, ILogger<IdempotencyFilter> logger) : IEndpointFilter
 {
     public const string HeaderName = "Idempotency-Key";
 
@@ -43,26 +43,35 @@ public sealed class IdempotencyFilter(IdempotencyStore store, ICurrentUser user)
 
             case ClaimOutcome.Replay:
                 var stored = await store.GetResultAsync(tenant, operation, key);
-                if (stored.ResponseStatus is null)
+                if (stored?.ResponseStatus is null)
                     return Results.Json(new { code = "IDEMPOTENCY_IN_PROGRESS" }, statusCode: StatusCodes.Status409Conflict);
                 http.Response.Headers["Idempotency-Replayed"] = "true";
                 return new CapturedResult(stored.ResponseStatus.Value, stored.ResponseBody ?? "");
         }
 
-        try
-        {
-            var raw = await next(ctx);
-            var result = raw as IResult ?? (raw is null ? Results.NoContent() : Results.Json(raw));
-            var captured = await CaptureAsync(http, result);
-            if (captured.Status >= 500) await store.ReleaseAsync(tenant, operation, key);
-            else await store.SetResultAsync(tenant, operation, key, captured.Status, captured.Body);
-            return captured;
-        }
+        // Release ONLY when the handler itself throws. Once the handler has returned it may have committed,
+        // so from here on the claim is never released: a failure to capture/store the result, or a 5xx returned
+        // by the handler, leaves the claim in place and a retry with the same key gets 409 IDEMPOTENCY_IN_PROGRESS
+        // (safe: no duplicate execution) until a lease/expiry mechanism exists.
+        object? raw;
+        try { raw = await next(ctx); }
         catch
         {
             await store.ReleaseAsync(tenant, operation, key);
             throw;
         }
+
+        var result = raw as IResult ?? (raw is null ? Results.NoContent() : Results.Json(raw));
+        var captured = await CaptureAsync(http, result);
+        if (captured.Status < 500)
+        {
+            try { await store.SetResultAsync(tenant, operation, key, captured.Status, captured.Body); }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Failed to store idempotency result for {Operation} key {Key}; claim left in place", operation, key);
+            }
+        }
+        return captured;
     }
 
     private static async Task<string> HashAsync(HttpRequest req)

@@ -2,6 +2,9 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.TestHost;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace ResidentComms.Api.Tests;
 
@@ -77,5 +80,59 @@ public class FoundationTests(ApiFactory f) : IClassFixture<ApiFactory>
     {
         var c = await f.LoginAs("meir");
         Assert.Equal(HttpStatusCode.OK, (await c.GetAsync("/v1/campaigns")).StatusCode);
+    }
+}
+
+public class HardeningTests(ApiFactory f) : IClassFixture<ApiFactory>
+{
+    private sealed class StoreFailingAfterCommit(ResidentComms.Infrastructure.Sql.SqlConnectionFactory db)
+        : ResidentComms.Infrastructure.Sql.IdempotencyStore(db)
+    {
+        public override Task SetResultAsync(Guid tenantId, string operationType, string key, int status, string body)
+            => throw new InvalidOperationException("simulated store failure");
+    }
+
+    [Fact] public async Task Store_failure_after_commit_does_not_allow_reexecution()
+    {
+        using var broken = f.WithWebHostBuilder(b => b.ConfigureTestServices(s =>
+        {
+            s.RemoveAll<ResidentComms.Infrastructure.Sql.IdempotencyStore>();
+            s.AddSingleton<ResidentComms.Infrastructure.Sql.IdempotencyStore, StoreFailingAfterCommit>();
+        }));
+        var login = await broken.CreateClient().PostAsJsonAsync("/v1/dev/login", new { userId = "dana" });
+        var token = (await login.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("token").GetString()!;
+        var c = broken.CreateClient();
+        c.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+
+        var key = Guid.NewGuid().ToString();
+        var body = new { name = "nodup-" + key, purpose = "SERVICE" };
+        var first = await c.SendWithKey(HttpMethod.Post, "/v1/campaigns", body, key);
+        var retry = await c.SendWithKey(HttpMethod.Post, "/v1/campaigns", body, key);
+
+        Assert.Equal(HttpStatusCode.Created, first.StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, retry.StatusCode);
+        Assert.Contains("IDEMPOTENCY_IN_PROGRESS", await retry.Content.ReadAsStringAsync());
+        Assert.Equal(1, await f.Db.ScalarAsync<int>($"SELECT COUNT(*) FROM Campaign WHERE campaign_name = N'nodup-{key}'"));
+    }
+
+    [Fact] public async Task Token_without_tenant_claim_is_401()
+    {
+        var key = new Microsoft.IdentityModel.Tokens.SymmetricSecurityKey(System.Text.Encoding.UTF8.GetBytes(ApiFactory.TestSigningKey));
+        var token = new Microsoft.IdentityModel.JsonWebTokens.JsonWebTokenHandler().CreateToken(new Microsoft.IdentityModel.Tokens.SecurityTokenDescriptor
+        {
+            Issuer = "residentcomms-dev",
+            Audience = "residentcomms-api",
+            Expires = DateTime.UtcNow.AddHours(1),
+            SigningCredentials = new Microsoft.IdentityModel.Tokens.SigningCredentials(key, Microsoft.IdentityModel.Tokens.SecurityAlgorithms.HmacSha256),
+            Subject = new System.Security.Claims.ClaimsIdentity(
+            [
+                new System.Security.Claims.Claim("sub", "dana"),
+                new System.Security.Claims.Claim("role", "creator"),
+                new System.Security.Claims.Claim("department_id", "EDU"),
+            ]),
+        });
+        var c = f.CreateClient();
+        c.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await c.GetAsync("/v1/campaigns")).StatusCode);
     }
 }

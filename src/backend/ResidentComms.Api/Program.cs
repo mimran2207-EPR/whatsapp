@@ -23,6 +23,19 @@ builder.Services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationSc
     .Configure<DevAuth>((o, dev) =>
     {
         o.MapInboundClaims = false;
+        o.Events = new JwtBearerEvents
+        {
+            // A token without the full principal is rejected as 401 here instead of failing with 500 later.
+            OnTokenValidated = ctx =>
+            {
+                var u = ctx.Principal;
+                static bool Has(System.Security.Claims.ClaimsPrincipal? p, string t) => !string.IsNullOrWhiteSpace(p?.FindFirst(t)?.Value);
+                if (!Has(u, "sub") || !Has(u, "role") || !Has(u, "department_id")
+                    || !Guid.TryParse(u!.FindFirst("tenant_id")?.Value, out var tenant) || tenant == Guid.Empty)
+                    ctx.Fail("Token is missing required claims.");
+                return Task.CompletedTask;
+            },
+        };
         o.TokenValidationParameters = new TokenValidationParameters
         {
             ValidIssuer = DevAuth.Issuer,
@@ -30,6 +43,7 @@ builder.Services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationSc
             IssuerSigningKey = dev.Key,
             NameClaimType = "name",
             RoleClaimType = "role",
+            ValidAlgorithms = [SecurityAlgorithms.HmacSha256],
             ClockSkew = TimeSpan.FromMinutes(1),
         };
     });
