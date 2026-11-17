@@ -8,7 +8,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\tools\ResidentComms.DbMigrator\ResidentComms.DbMigrator.csproj" />
+    <ProjectReference Include="../../ResidentComms.Infrastructure/ResidentComms.Infrastructure.csproj" />
   </ItemGroup>
 
   <ItemGroup>

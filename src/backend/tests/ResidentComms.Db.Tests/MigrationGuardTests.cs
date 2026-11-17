@@ -1,4 +1,4 @@
-using ResidentComms.DbMigrator;
+using ResidentComms.Infrastructure.Sql;
 
 namespace ResidentComms.Db.Tests;
 

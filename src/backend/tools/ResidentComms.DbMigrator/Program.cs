@@ -1,4 +1,4 @@
-using ResidentComms.DbMigrator;
+using ResidentComms.Infrastructure.Sql;
 
 string server = "localhost";
 string? database = null;

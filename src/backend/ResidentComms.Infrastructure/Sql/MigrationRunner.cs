@@ -1,7 +1,7 @@
 using System.Text.RegularExpressions;
 using Microsoft.Data.SqlClient;
 
-namespace ResidentComms.DbMigrator;
+namespace ResidentComms.Infrastructure.Sql;
 
 /// <summary>Creates the database if missing and applies db/migrations/V*.sql not yet recorded in SchemaVersion.</summary>
 public sealed class MigrationRunner(string server, string database, string migrationsDir)
