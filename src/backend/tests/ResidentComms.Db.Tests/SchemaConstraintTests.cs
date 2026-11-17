@@ -218,4 +218,29 @@ public class SchemaConstraintTests(TestDatabase db) : IClassFixture<TestDatabase
         await cmd.ExecuteNonQueryAsync();
         return Convert.ToInt32(outcome.Value);
     }
+
+    [Fact]
+    public async Task Audience_member_identity_is_unique_per_version()
+    {
+        var (t, _, _, _) = await SeedAsync();
+        var av = await db.ScalarAsync<Guid>($"SELECT TOP 1 audience_version_id FROM AudienceVersion WHERE tenant_id = '{t}'");
+        var sql = $"""
+            INSERT AudienceMember(audience_member_id, tenant_id, audience_version_id, source_row_number, source_recipient_id, approved_identity_key, validation_state)
+            VALUES (NEWID(), '{t}', '{av}', 2, '000123', 'ID:000123', 'VALID');
+            """;
+        await db.Exec(sql);
+        var ex = await Assert.ThrowsAsync<SqlException>(() => db.Exec(sql));
+        Assert.Equal(2627, ex.Number);
+    }
+
+    [Fact]
+    public async Task Outbox_rejects_second_dispatch_for_same_message()
+    {
+        var (t, c, r, cr) = await SeedAsync();
+        await InsertMessage(t, c, r, cr, "SMS", 1, "ob-key");
+        var sql = $"INSERT OutboxMessage(tenant_id, message_type, aggregate_id) SELECT '{t}', 'dispatch.sms', message_id FROM Message WHERE idempotency_key = 'ob-key'";
+        await db.Exec(sql);
+        var ex = await Assert.ThrowsAsync<SqlException>(() => db.Exec(sql));
+        Assert.Equal(2627, ex.Number);
+    }
 }

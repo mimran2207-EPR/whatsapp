@@ -1,4 +1,7 @@
 <Solution>
+  <Folder Name="/tools/">
+    <Project Path="tools/ResidentComms.DbMigrator/ResidentComms.DbMigrator.csproj" />
+  </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/ResidentComms.Db.Tests/ResidentComms.Db.Tests.csproj" />
     <Project Path="tests/ResidentComms.Domain.Tests/ResidentComms.Domain.Tests.csproj" />
