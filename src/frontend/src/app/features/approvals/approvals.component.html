@@ -1,0 +1,83 @@
+<div class="page">
+  <div class="page-head">
+    <h1 class="t-h1-24">תיבת אישורים</h1>
+    <span class="sandbox-tag">Sandbox (מדומה)</span>
+  </div>
+
+  @if (listError()) {
+    <p class="error-text" role="alert">{{ listError() }}</p>
+  }
+
+  <div class="layout">
+    <section class="stack" aria-labelledby="ap-list">
+      <h2 id="ap-list" class="t-h3-18 section-title">ממתינים לאישור</h2>
+      @if (items() === null) {
+        <p class="muted" role="status">טוען…</p>
+      } @else if (items()!.length === 0) {
+        <p class="empty">
+          @if (auth.user()?.role === 'approver') {
+            אין משלוחים שממתינים לאישורך
+          } @else {
+            אין משלוחים לאישור. רק משתמש עם הרשאת אישור רואה כאן משלוחים.
+          }
+        </p>
+      } @else {
+        <ul class="list">
+          @for (a of items(); track a.campaignId) {
+            <li>
+              <button type="button" class="pick" [attr.aria-pressed]="selected()?.campaignId === a.campaignId" (click)="select(a)">
+                <rc-grid-row [selected]="selected()?.campaignId === a.campaignId">
+                  <span class="pick__name">{{ a.name }}</span>
+                  <span class="muted num">{{ fmt(a.recipients) }} נמענים</span>
+                </rc-grid-row>
+              </button>
+            </li>
+          }
+        </ul>
+      }
+    </section>
+
+    <section class="card stack" aria-labelledby="ap-detail">
+      @if (selected(); as a) {
+        <h2 id="ap-detail" class="t-h2-20 section-title">{{ a.name }}</h2>
+        <dl class="counts">
+          <div><dt>מטרה</dt><dd>{{ purpose(a.purpose) }}</dd></div>
+          <div><dt>הוגש על ידי</dt><dd>{{ a.submittedBy }}</dd></div>
+          <div><dt>נמענים</dt><dd>{{ fmt(a.recipients) }}</dd></div>
+          <div>
+            <dt>ערוץ</dt>
+            <dd>
+              @if (channel(a.channel); as ch) {
+                <rc-channel-chip [channel]="ch" />
+              } @else {
+                לא ידוע
+              }
+            </dd>
+          </div>
+        </dl>
+
+        <section class="preview" aria-labelledby="ap-preview">
+          <h3 id="ap-preview" class="t-body-14-medium">תצוגה מקדימה</h3>
+          <p class="muted">תוכן ההודעה אינו נחשף ב-API של תיבת האישורים בשלב M1. הסיכום המחייב שלהלן הוא מה שמאושר.</p>
+        </section>
+
+        <p class="binding t-body-lg-16">{{ binding() }}</p>
+
+        <div class="detail__error" aria-live="assertive">
+          @if (error()) {
+            <p class="error-text">{{ error() }}</p>
+          }
+        </div>
+
+        <div class="actions">
+          <rc-button [disabled]="busy()" (click)="approveAndRelease()">
+            {{ busy() ? 'מאשר ושולח…' : 'אישור ושליחת ' + fmt(a.recipients) + ' הודעות' }}
+          </rc-button>
+        </div>
+      } @else {
+        <h2 id="ap-detail" class="visually-hidden">פרטי המשלוח</h2>
+        <p class="empty">בחרו משלוח מהרשימה</p>
+      }
+    </section>
+  </div>
+</div>

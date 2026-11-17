@@ -24,7 +24,11 @@
                 "input": "public"
               }
             ],
-            "styles": ["src/styles/tokens.css", "src/styles.css"]
+            "styles": [
+              "src/styles/tokens.css",
+              "src/styles/features.css",
+              "src/styles.css"
+            ]
           },
           "configurations": {
             "production": {
@@ -60,7 +64,10 @@
               "buildTarget": "resident-comms:build:development"
             }
           },
-          "defaultConfiguration": "development"
+          "defaultConfiguration": "development",
+          "options": {
+            "proxyConfig": "proxy.conf.json"
+          }
         },
         "test": {
           "builder": "@angular/build:unit-test"
