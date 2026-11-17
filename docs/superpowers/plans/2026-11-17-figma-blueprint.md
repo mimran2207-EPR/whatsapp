@@ -10,6 +10,8 @@
 
 **Spec:** `docs/superpowers/specs/2026-11-17-resident-messaging-design.md` §3, and `RESIDENT_COMMUNICATION_SPEC.md` §2, §3, §4, §9, §11 and §17.
 
+**Requires:** data-contracts plan Tasks 5–6 merged. They produce `docs/catalog/field-catalog.v1.json`, `docs/status-dictionary.md` and `docs/qa/truth-book-01.md`, which Tasks 3, 5 and 7 here read. Tasks 1–2 can start before that.
+
 ## Global Constraints
 
 - **Required skills.** Load `figma:figma-use` before any `use_figma` call. Load `figma:figma-create-new-file` before `create_new_file`. Load `figma:figma-generate-design` for every screen task.
@@ -49,6 +51,7 @@
 - [ ] **Step 2:** Create text styles from the Muni font and sizes, including a tabular-figures style for IDs, counts and money. Create effect styles for the card shadow and the focus ring (a 2px brand ring with offset). Define the layers Base, Sticky, Drawer, Modal and Toast as a documented elevation scale.
 - [ ] **Step 3:** On the `01 Foundations` page, lay out swatches, the type ramp, spacing, radii, shadows, the focus ring, and an RTL/LTR sample showing a Hebrew sentence with an isolated phone number, email and ID.
 - [ ] **Step 4:** Verify with `get_screenshot` of the page and check against the Muni screenshot. Colors and type must match.
+- [ ] **Step 5: Checkpoint 0.** Send the user the Foundations screenshot next to the Muni screenshot. Wait for their OK before Task 3. A wrong font or color is cheapest to fix here.
 
 ### Task 3: 02 Components — core components with all states
 

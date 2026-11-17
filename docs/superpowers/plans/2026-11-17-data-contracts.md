@@ -134,7 +134,7 @@ TestResults/
 ## הרצה
 
     dotnet test src/backend/ResidentComms.slnx
-    node --test tools/catalog
+    node --test tools/catalog/build-catalog.test.mjs
 
 בדיקות המסד דורשות SQL Server מקומי. מחרוזת חיבור ברירת מחדל:
 `Server=localhost;Integrated Security=true;TrustServerCertificate=true`.
@@ -369,7 +369,6 @@ public static class DisplayStatusDeriver
         if (a.Delivery == DeliveryState.Unknown || a.Handoff == HandoffState.Unknown) return DisplayStatus.Unknown;
         if (a.Handoff == HandoffState.Accepted) return DisplayStatus.AcceptedByProvider;
         if (a.Handoff == HandoffState.HandedOff) return DisplayStatus.HandedOff;
-        if (a.Processing == ProcessingState.Canceled) return DisplayStatus.Canceled;
         if (a.Processing is ProcessingState.Queued or ProcessingState.InProgress) return DisplayStatus.Queued;
         return DisplayStatus.Pending;
     }
@@ -670,6 +669,30 @@ public class SchemaConstraintTests(TestDatabase db) : IClassFixture<TestDatabase
         await Assert.ThrowsAsync<SqlException>(() => db.Exec(sql));
     }
 
+    [Fact]
+    public async Task Message_cannot_reference_a_campaign_of_another_tenant()
+    {
+        var (_, c, r, cr) = await SeedAsync();
+        var other = Guid.NewGuid();
+        await db.Exec($"INSERT Tenant(tenant_id, name) VALUES ('{other}', N'רשות אחרת')");
+        await Assert.ThrowsAsync<SqlException>(() => InsertMessage(other, c, r, cr, "SMS", 1, $"k-{Guid.NewGuid()}"));
+    }
+
+    [Fact]
+    public async Task Same_identity_can_appear_in_two_snapshots_of_one_campaign()
+    {
+        var (t, c, _, _) = await SeedAsync();
+        var snap2 = Guid.NewGuid();
+        await db.Exec($"""
+            INSERT AudienceSnapshot(audience_snapshot_id, tenant_id, audience_version_id, frozen_at)
+              SELECT '{snap2}', tenant_id, audience_version_id, SYSUTCDATETIME()
+              FROM AudienceSnapshot WHERE audience_snapshot_id =
+                (SELECT audience_snapshot_id FROM CampaignRevision WHERE campaign_id = '{c}' AND revision_no = 1);
+            INSERT CampaignRecipient(campaign_recipient_id, tenant_id, campaign_id, audience_snapshot_id, source_recipient_id, approved_identity_key)
+              VALUES (NEWID(), '{t}', '{c}', '{snap2}', '000123', 'ID:000123');
+            """);
+    }
+
     [Theory]
     [InlineData("hash-A", "hash-A", 1)]
     [InlineData("hash-A", "hash-B", 2)]
@@ -718,26 +741,33 @@ CREATE TABLE Audience (
     name NVARCHAR(200) NOT NULL,
     audience_kind VARCHAR(20) NOT NULL CHECK (audience_kind IN ('FILE','SQL','API','SAVED_FILTER','REUSABLE')),
     owner_id VARCHAR(100) NULL,
-    created_at DATETIME2(3) NOT NULL DEFAULT SYSUTCDATETIME()
+    created_at DATETIME2(3) NOT NULL DEFAULT SYSUTCDATETIME(),
+    CONSTRAINT UQ_Audience_Tenant UNIQUE (tenant_id, audience_id)
 );
 
 CREATE TABLE AudienceVersion (
     audience_version_id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY,
     tenant_id UNIQUEIDENTIFIER NOT NULL REFERENCES Tenant(tenant_id),
-    audience_id UNIQUEIDENTIFIER NOT NULL REFERENCES Audience(audience_id),
+    audience_id UNIQUEIDENTIFIER NOT NULL,
     version_no INT NOT NULL,
     source_loaded_at DATETIME2(3) NULL,
     created_at DATETIME2(3) NOT NULL DEFAULT SYSUTCDATETIME(),
-    CONSTRAINT UQ_AudienceVersion UNIQUE (tenant_id, audience_id, version_no)
+    CONSTRAINT UQ_AudienceVersion UNIQUE (tenant_id, audience_id, version_no),
+    CONSTRAINT UQ_AudienceVersion_Tenant UNIQUE (tenant_id, audience_version_id),
+    CONSTRAINT FK_AudienceVersion_Audience FOREIGN KEY (tenant_id, audience_id) REFERENCES Audience(tenant_id, audience_id)
 );
 
 -- Immutable once created (created at approval).
 CREATE TABLE AudienceSnapshot (
     audience_snapshot_id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY,
     tenant_id UNIQUEIDENTIFIER NOT NULL REFERENCES Tenant(tenant_id),
-    audience_version_id UNIQUEIDENTIFIER NOT NULL REFERENCES AudienceVersion(audience_version_id),
-    frozen_at DATETIME2(3) NOT NULL
+    audience_version_id UNIQUEIDENTIFIER NOT NULL,
+    frozen_at DATETIME2(3) NOT NULL,
+    CONSTRAINT UQ_AudienceSnapshot_Tenant UNIQUE (tenant_id, audience_snapshot_id),
+    CONSTRAINT FK_AudienceSnapshot_Version FOREIGN KEY (tenant_id, audience_version_id) REFERENCES AudienceVersion(tenant_id, audience_version_id)
 );
+-- Tenant isolation in the data layer (spec §15): every child FK is composite (tenant_id, parent_id),
+-- so a row can never reference a parent of another tenant.
 
 CREATE TABLE Campaign (
     campaign_id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY,
@@ -748,57 +778,67 @@ CREATE TABLE Campaign (
     campaign_type VARCHAR(20) NOT NULL CHECK (campaign_type IN ('MANUAL','SCHEDULED','API','EVENT','CHILD')),
     communication_purpose VARCHAR(20) NOT NULL CHECK (communication_purpose IN ('SERVICE','OPERATIONAL','PUBLIC_INFO','EMERGENCY','PROMOTIONAL')),
     campaign_state VARCHAR(30) NOT NULL,
-    parent_campaign_id UNIQUEIDENTIFIER NULL REFERENCES Campaign(campaign_id),
+    parent_campaign_id UNIQUEIDENTIFIER NULL,
     created_by VARCHAR(100) NOT NULL,
     created_at DATETIME2(3) NOT NULL DEFAULT SYSUTCDATETIME(),
-    updated_at DATETIME2(3) NOT NULL DEFAULT SYSUTCDATETIME()
+    updated_at DATETIME2(3) NOT NULL DEFAULT SYSUTCDATETIME(),
+    CONSTRAINT UQ_Campaign_Tenant UNIQUE (tenant_id, campaign_id),
+    CONSTRAINT FK_Campaign_Parent FOREIGN KEY (tenant_id, parent_campaign_id) REFERENCES Campaign(tenant_id, campaign_id)
 );
 
 CREATE TABLE CampaignRevision (
     campaign_revision_id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY,
     tenant_id UNIQUEIDENTIFIER NOT NULL REFERENCES Tenant(tenant_id),
-    campaign_id UNIQUEIDENTIFIER NOT NULL REFERENCES Campaign(campaign_id),
+    campaign_id UNIQUEIDENTIFIER NOT NULL,
     revision_no INT NOT NULL,
-    audience_snapshot_id UNIQUEIDENTIFIER NULL REFERENCES AudienceSnapshot(audience_snapshot_id),
+    audience_snapshot_id UNIQUEIDENTIFIER NULL,
     approval_package_hash CHAR(64) NULL,           -- canonical hash: audience + content + documents + channels + schedule + policy version
     scheduled_at DATETIME2(3) NULL,
     created_at DATETIME2(3) NOT NULL DEFAULT SYSUTCDATETIME(),
-    CONSTRAINT UQ_CampaignRevision UNIQUE (tenant_id, campaign_id, revision_no)
+    CONSTRAINT UQ_CampaignRevision UNIQUE (tenant_id, campaign_id, revision_no),
+    CONSTRAINT UQ_CampaignRevision_Tenant UNIQUE (tenant_id, campaign_revision_id),
+    CONSTRAINT FK_CampaignRevision_Campaign FOREIGN KEY (tenant_id, campaign_id) REFERENCES Campaign(tenant_id, campaign_id),
+    CONSTRAINT FK_CampaignRevision_Snapshot FOREIGN KEY (tenant_id, audience_snapshot_id) REFERENCES AudienceSnapshot(tenant_id, audience_snapshot_id)
 );
 
 CREATE TABLE Approval (
     approval_id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY,
     tenant_id UNIQUEIDENTIFIER NOT NULL REFERENCES Tenant(tenant_id),
-    campaign_revision_id UNIQUEIDENTIFIER NOT NULL REFERENCES CampaignRevision(campaign_revision_id),
+    campaign_revision_id UNIQUEIDENTIFIER NOT NULL,
     approval_package_hash CHAR(64) NOT NULL,
     decision VARCHAR(20) NOT NULL CHECK (decision IN ('APPROVED','RETURNED')),
     decided_by VARCHAR(100) NOT NULL,
     decided_at DATETIME2(3) NOT NULL,
     invalidated_at DATETIME2(3) NULL,              -- set when a material change creates a new revision
-    note NVARCHAR(2000) NULL
+    note NVARCHAR(2000) NULL,
+    CONSTRAINT FK_Approval_Revision FOREIGN KEY (tenant_id, campaign_revision_id) REFERENCES CampaignRevision(tenant_id, campaign_revision_id)
 );
 
--- One frozen recipient per campaign. Shared contact details never merge recipients (spec §0).
+-- One frozen recipient per snapshot. A re-approved audience creates a new snapshot holding the same people,
+-- so uniqueness is per snapshot, not per campaign (spec §4, §21.2). Shared contact details never merge recipients (spec §0).
 CREATE TABLE CampaignRecipient (
     campaign_recipient_id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY,
     tenant_id UNIQUEIDENTIFIER NOT NULL REFERENCES Tenant(tenant_id),
-    campaign_id UNIQUEIDENTIFIER NOT NULL REFERENCES Campaign(campaign_id),
-    audience_snapshot_id UNIQUEIDENTIFIER NOT NULL REFERENCES AudienceSnapshot(audience_snapshot_id),
+    campaign_id UNIQUEIDENTIFIER NOT NULL,
+    audience_snapshot_id UNIQUEIDENTIFIER NOT NULL,
     source_recipient_id NVARCHAR(100) NOT NULL,    -- string; leading zeros kept
     approved_identity_key NVARCHAR(200) NOT NULL,
     eligibility_state VARCHAR(30) NULL,
     primary_exclusion_reason VARCHAR(50) NULL,
-    CONSTRAINT UQ_CampaignRecipient UNIQUE (tenant_id, campaign_id, approved_identity_key)
+    CONSTRAINT UQ_CampaignRecipient UNIQUE (tenant_id, audience_snapshot_id, approved_identity_key),
+    CONSTRAINT UQ_CampaignRecipient_Tenant UNIQUE (tenant_id, campaign_recipient_id),
+    CONSTRAINT FK_CampaignRecipient_Campaign FOREIGN KEY (tenant_id, campaign_id) REFERENCES Campaign(tenant_id, campaign_id),
+    CONSTRAINT FK_CampaignRecipient_Snapshot FOREIGN KEY (tenant_id, audience_snapshot_id) REFERENCES AudienceSnapshot(tenant_id, audience_snapshot_id)
 );
 
 -- Logical message = recipient × channel × sequence step (spec §21.3).
 CREATE TABLE Message (
     message_id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY,
     tenant_id UNIQUEIDENTIFIER NOT NULL REFERENCES Tenant(tenant_id),
-    campaign_id UNIQUEIDENTIFIER NOT NULL REFERENCES Campaign(campaign_id),
-    campaign_revision_id UNIQUEIDENTIFIER NOT NULL REFERENCES CampaignRevision(campaign_revision_id),
-    campaign_recipient_id UNIQUEIDENTIFIER NOT NULL REFERENCES CampaignRecipient(campaign_recipient_id),
-    parent_message_id UNIQUEIDENTIFIER NULL REFERENCES Message(message_id),   -- fallback only
+    campaign_id UNIQUEIDENTIFIER NOT NULL,
+    campaign_revision_id UNIQUEIDENTIFIER NOT NULL,
+    campaign_recipient_id UNIQUEIDENTIFIER NOT NULL,
+    parent_message_id UNIQUEIDENTIFIER NULL,       -- fallback only
     channel VARCHAR(10) NOT NULL CHECK (channel IN ('WHATSAPP','SMS','EMAIL')),
     channel_sequence_no INT NOT NULL,
     idempotency_key VARCHAR(200) NOT NULL,
@@ -820,14 +860,19 @@ CREATE TABLE Message (
     status_mapping_version VARCHAR(50) NULL,
     created_at DATETIME2(3) NOT NULL DEFAULT SYSUTCDATETIME(),
     CONSTRAINT UQ_Message_Logical UNIQUE (tenant_id, campaign_id, campaign_revision_id, campaign_recipient_id, channel, channel_sequence_no),
-    CONSTRAINT UQ_Message_Idempotency UNIQUE (tenant_id, idempotency_key)
+    CONSTRAINT UQ_Message_Idempotency UNIQUE (tenant_id, idempotency_key),
+    CONSTRAINT UQ_Message_Tenant UNIQUE (tenant_id, message_id),
+    CONSTRAINT FK_Message_Campaign FOREIGN KEY (tenant_id, campaign_id) REFERENCES Campaign(tenant_id, campaign_id),
+    CONSTRAINT FK_Message_Revision FOREIGN KEY (tenant_id, campaign_revision_id) REFERENCES CampaignRevision(tenant_id, campaign_revision_id),
+    CONSTRAINT FK_Message_Recipient FOREIGN KEY (tenant_id, campaign_recipient_id) REFERENCES CampaignRecipient(tenant_id, campaign_recipient_id),
+    CONSTRAINT FK_Message_Parent FOREIGN KEY (tenant_id, parent_message_id) REFERENCES Message(tenant_id, message_id)
 );
 
 -- Retry = new attempt, not new message.
 CREATE TABLE SendAttempt (
     attempt_id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY,
     tenant_id UNIQUEIDENTIFIER NOT NULL REFERENCES Tenant(tenant_id),
-    message_id UNIQUEIDENTIFIER NOT NULL REFERENCES Message(message_id),
+    message_id UNIQUEIDENTIFIER NOT NULL,
     attempt_number INT NOT NULL,
     attempt_reason VARCHAR(20) NOT NULL CHECK (attempt_reason IN ('INITIAL','CONTROLLED_RETRY')),
     request_started_at DATETIME2(3) NOT NULL,
@@ -838,15 +883,17 @@ CREATE TABLE SendAttempt (
     provider_response_code VARCHAR(50) NULL,
     provider_error_code VARCHAR(100) NULL,
     retry_not_before DATETIME2(3) NULL,
-    CONSTRAINT UQ_SendAttempt UNIQUE (message_id, attempt_number)
+    CONSTRAINT UQ_SendAttempt UNIQUE (message_id, attempt_number),
+    CONSTRAINT UQ_SendAttempt_Tenant UNIQUE (tenant_id, attempt_id),
+    CONSTRAINT FK_SendAttempt_Message FOREIGN KEY (tenant_id, message_id) REFERENCES Message(tenant_id, message_id)
 );
 
 -- Append-only event log. message_id NULL = unattributed (never guessed).
 CREATE TABLE MessageEvent (
     event_id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY,
     tenant_id UNIQUEIDENTIFIER NOT NULL REFERENCES Tenant(tenant_id),
-    message_id UNIQUEIDENTIFIER NULL REFERENCES Message(message_id),
-    attempt_id UNIQUEIDENTIFIER NULL REFERENCES SendAttempt(attempt_id),
+    message_id UNIQUEIDENTIFIER NULL,
+    attempt_id UNIQUEIDENTIFIER NULL,
     provider_event_id VARCHAR(200) NULL,
     deduplication_key VARCHAR(200) NOT NULL,
     event_type_raw NVARCHAR(200) NOT NULL,
@@ -858,7 +905,9 @@ CREATE TABLE MessageEvent (
     signature_valid BIT NOT NULL,
     correlation_quality VARCHAR(20) NULL,
     payload_ref VARCHAR(400) NULL,
-    CONSTRAINT UQ_MessageEvent_Dedup UNIQUE (tenant_id, deduplication_key)
+    CONSTRAINT UQ_MessageEvent_Dedup UNIQUE (tenant_id, deduplication_key),
+    CONSTRAINT FK_MessageEvent_Message FOREIGN KEY (tenant_id, message_id) REFERENCES Message(tenant_id, message_id),
+    CONSTRAINT FK_MessageEvent_Attempt FOREIGN KEY (tenant_id, attempt_id) REFERENCES SendAttempt(tenant_id, attempt_id)
 );
 GO
 
@@ -874,8 +923,8 @@ GO
 CREATE TABLE Document (
     document_id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY,
     tenant_id UNIQUEIDENTIFIER NOT NULL REFERENCES Tenant(tenant_id),
-    campaign_id UNIQUEIDENTIFIER NOT NULL REFERENCES Campaign(campaign_id),
-    campaign_recipient_id UNIQUEIDENTIFIER NOT NULL REFERENCES CampaignRecipient(campaign_recipient_id),
+    campaign_id UNIQUEIDENTIFIER NOT NULL,
+    campaign_recipient_id UNIQUEIDENTIFIER NOT NULL,
     document_key NVARCHAR(200) NOT NULL,
     document_template_id UNIQUEIDENTIFIER NULL,
     document_template_version VARCHAR(50) NULL,
@@ -883,18 +932,23 @@ CREATE TABLE Document (
     recipient_match_state VARCHAR(20) NOT NULL CHECK (recipient_match_state IN ('UNCHECKED','MATCHED','UNMATCHED','AMBIGUOUS')),
     content_sha256 CHAR(64) NULL,
     generated_at DATETIME2(3) NULL,
-    CONSTRAINT UQ_Document_Match UNIQUE (tenant_id, campaign_id, campaign_recipient_id, document_key)
+    CONSTRAINT UQ_Document_Match UNIQUE (tenant_id, campaign_id, campaign_recipient_id, document_key),
+    CONSTRAINT UQ_Document_Tenant UNIQUE (tenant_id, document_id),
+    CONSTRAINT FK_Document_Campaign FOREIGN KEY (tenant_id, campaign_id) REFERENCES Campaign(tenant_id, campaign_id),
+    CONSTRAINT FK_Document_Recipient FOREIGN KEY (tenant_id, campaign_recipient_id) REFERENCES CampaignRecipient(tenant_id, campaign_recipient_id)
 );
 
 CREATE TABLE MessageDocumentLink (
     message_document_link_id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY,
     tenant_id UNIQUEIDENTIFIER NOT NULL REFERENCES Tenant(tenant_id),
-    message_id UNIQUEIDENTIFIER NOT NULL REFERENCES Message(message_id),
-    document_id UNIQUEIDENTIFIER NOT NULL REFERENCES Document(document_id),
+    message_id UNIQUEIDENTIFIER NOT NULL,
+    document_id UNIQUEIDENTIFIER NOT NULL,
     delivery_mode VARCHAR(20) NOT NULL CHECK (delivery_mode IN ('ATTACHMENT','SECURE_LINK')),
     attachment_or_link_state VARCHAR(20) NOT NULL,
     link_expires_at DATETIME2(3) NULL,
-    CONSTRAINT UQ_MessageDocumentLink UNIQUE (message_id, document_id)
+    CONSTRAINT UQ_MessageDocumentLink UNIQUE (message_id, document_id),
+    CONSTRAINT FK_Link_Message FOREIGN KEY (tenant_id, message_id) REFERENCES Message(tenant_id, message_id),
+    CONSTRAINT FK_Link_Document FOREIGN KEY (tenant_id, document_id) REFERENCES Document(tenant_id, document_id)
 );
 GO
 ```
@@ -942,7 +996,7 @@ GO
 - [ ] **Step 7: Run the tests to verify that they pass**
 
 Run: `dotnet test src/backend/tests/ResidentComms.Db.Tests`
-Expected: all 7 tests pass. Then confirm that no `ResidentComms_Test_*` database remains:
+Expected: all 9 tests pass. Then confirm that no `ResidentComms_Test_*` database remains:
 `sqlcmd -S localhost -E -C -Q "select name from sys.databases where name like 'ResidentComms_Test_%'"` returns 0 rows.
 
 - [ ] **Step 8: Commit**
@@ -1009,7 +1063,7 @@ test('profile and access are expanded', () => {
 
 - [ ] **Step 2: Run the tests to verify that they fail**
 
-Run: `node --test tools/catalog`
+Run: `node --test tools/catalog/build-catalog.test.mjs` (pass the file path: on Node 24, a bare directory argument does not find the tests)
 Expected: FAIL with "Cannot find module ... build-catalog.mjs".
 
 - [ ] **Step 3: Write `build-catalog.mjs`**
@@ -1113,7 +1167,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
 
 - [ ] **Step 4: Run the tests to verify that they pass**
 
-Run: `node --test tools/catalog`
+Run: `node --test tools/catalog/build-catalog.test.mjs`
 Expected: 5 tests pass. If the uniqueness test fails, print the duplicate `grain|technical_name` pairs. Don't silently dedupe them. Record each duplicate as a finding in `docs/catalog/README.md` and ask the user before changing anything. Spec §21.5 says identical names across views are not necessarily the same definition.
 
 - [ ] **Step 5: Generate the JSON**
@@ -1305,9 +1359,10 @@ Expected: all Domain tests pass (22). The Db tests also pass when SQL Server is 
 9. Delivery = Unknown או Handoff = Unknown ← **לא ידוע**
 10. Handoff = Accepted ← **התקבל אצל הספק**
 11. Handoff = HandedOff ← **הועבר לספק**
-12. Canceled אחרי העברה, ללא מידע נוסף ← **בוטל**
-13. Queued / InProgress ← **בתור**
-14. אחרת ← **ממתין**
+12. Queued / InProgress ← **בתור**
+13. אחרת ← **ממתין**
+
+הערה: ביטול אחרי העברה לספק מוצג לפי מצב הספק, כי אין הבטחה לבטל הודעה שהספק קיבל (סעיף 4).
 
 ## מיזוג מצב מסירה (DeliveryMerge)
 
@@ -1330,7 +1385,7 @@ git commit -m "feat(domain): counting rules with truth book 01 and status dictio
 
 ## Done criteria for this plan
 
-- `dotnet test src/backend/ResidentComms.slnx` passes: 22 Domain tests and 7 Db tests.
-- `node --test tools/catalog` passes, and `docs/catalog/field-catalog.v1.json` has been generated.
+- `dotnet test src/backend/ResidentComms.slnx` passes: 22 Domain tests and 9 Db tests.
+- `node --test tools/catalog/build-catalog.test.mjs` passes, and `docs/catalog/field-catalog.v1.json` has been generated.
 - ADRs 001–003, the status dictionary and truth book 01 are committed.
 - Nothing is pushed until the user asks.
