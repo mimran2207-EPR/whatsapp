@@ -57,3 +57,28 @@ public class ImportValidatorTests
         Assert.Equal("ID:" + Fixtures.DuplicateId, first.IdentityKey);
     }
 }
+
+public class SourceRowNumberTests
+{
+    private static readonly ImportMapping Map = new("id", null, "phone", []);
+
+    [Fact] public void Csv_row_numbers_survive_blank_rows_and_multiline_fields()
+    {
+        var csv = "id,phone\r\n1,0521111111\r\n\r\n2,0522222222\r\n3,\"05\r\n23\"\r\n4,0524444444\r\n";
+        var sheet = SpreadsheetReader.Read(new MemoryStream(Encoding.UTF8.GetBytes(csv)), "a.csv");
+        var rows = ImportValidator.Validate(sheet, Map);
+        Assert.Equal([2, 4, 5, 7], rows.Select(r => r.SourceRowNumber));
+    }
+
+    [Fact] public void Xlsx_row_numbers_survive_blank_rows()
+    {
+        using var wb = new ClosedXML.Excel.XLWorkbook();
+        var ws = wb.AddWorksheet("s");
+        ws.Cell(1, 1).Value = "id"; ws.Cell(1, 2).Value = "phone";
+        ws.Cell(2, 1).Value = "1"; ws.Cell(2, 2).Value = "0521111111";
+        ws.Cell(4, 1).Value = "2"; ws.Cell(4, 2).Value = "0522222222";
+        using var ms = new MemoryStream(); wb.SaveAs(ms); ms.Position = 0;
+        var rows = ImportValidator.Validate(SpreadsheetReader.Read(ms, "a.xlsx"), Map);
+        Assert.Equal([2, 4], rows.Select(r => r.SourceRowNumber));
+    }
+}

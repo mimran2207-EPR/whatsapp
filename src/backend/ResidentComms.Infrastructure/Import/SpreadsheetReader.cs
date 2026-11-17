@@ -7,7 +7,8 @@ public record SheetData(
     IReadOnlyList<string> Headers,
     IReadOnlyList<IReadOnlyList<string?>> Rows,
     string? SheetName,
-    string? DetectedEncoding);
+    string? DetectedEncoding,
+    IReadOnlyList<int> RowNumbers);
 
 public class UnsupportedFileException(string message) : Exception(message);
 
@@ -32,7 +33,7 @@ public static class SpreadsheetReader
         using var wb = new XLWorkbook(content);
         var ws = wb.Worksheets.FirstOrDefault(w => w.Visibility == XLWorksheetVisibility.Visible) ?? wb.Worksheets.First();
         var used = ws.RangeUsed();
-        if (used is null) return new SheetData([], [], ws.Name, null);
+        if (used is null) return new SheetData([], [], ws.Name, null, []);
 
         var firstRow = used.FirstRow().RowNumber();
         var lastRow = used.LastRow().RowNumber();
@@ -43,14 +44,16 @@ public static class SpreadsheetReader
         for (var c = firstCol; c <= lastCol; c++) headers.Add((CellText(ws.Cell(firstRow, c)) ?? "").Trim());
 
         var rows = new List<IReadOnlyList<string?>>();
+        var rowNumbers = new List<int>();
         for (var r = firstRow + 1; r <= lastRow; r++)
         {
             var row = new List<string?>();
             for (var c = firstCol; c <= lastCol; c++) row.Add(CellText(ws.Cell(r, c)));
             if (row.All(string.IsNullOrWhiteSpace)) continue;
             rows.Add(row);
+            rowNumbers.Add(r);
         }
-        return new SheetData(headers, rows, ws.Name, null);
+        return new SheetData(headers, rows, ws.Name, null, rowNumbers);
     }
 
     private static string? CellText(IXLCell cell)
@@ -87,20 +90,22 @@ public static class SpreadsheetReader
             }
         }
 
-        var records = ParseCsv(text).Where(r => !r.All(string.IsNullOrWhiteSpace)).ToList();
-        if (records.Count == 0) return new SheetData([], [], null, encodingName);
+        var records = ParseCsv(text).Where(r => !r.Fields.All(string.IsNullOrWhiteSpace)).ToList();
+        if (records.Count == 0) return new SheetData([], [], null, encodingName, []);
 
-        var headers = records[0].Select(h => (h ?? "").Trim()).ToList();
+        var headers = records[0].Fields.Select(h => (h ?? "").Trim()).ToList();
         var rows = records.Skip(1)
-            .Select(r => (IReadOnlyList<string?>)r.Select(v => string.IsNullOrEmpty(v) ? null : v).ToList())
+            .Select(r => (IReadOnlyList<string?>)r.Fields.Select(v => string.IsNullOrEmpty(v) ? null : v).ToList())
             .ToList();
-        return new SheetData(headers, rows, null, encodingName);
+        return new SheetData(headers, rows, null, encodingName, records.Skip(1).Select(r => r.Line).ToList());
     }
 
     /// <summary>Minimal RFC-4180 parser: quoted fields, embedded commas/quotes/newlines.</summary>
-    private static List<List<string?>> ParseCsv(string text)
+    private static List<(int Line, List<string?> Fields)> ParseCsv(string text)
     {
-        var records = new List<List<string?>>();
+        var records = new List<(int Line, List<string?> Fields)>();
+        var line = 1;
+        var recordLine = 1;
         var row = new List<string?>();
         var field = new StringBuilder();
         var inQuotes = false;
@@ -110,14 +115,16 @@ public static class SpreadsheetReader
         void EndRecord()
         {
             EndField();
-            records.Add(row);
+            records.Add((recordLine, row));
             row = [];
             any = false;
+            recordLine = line;
         }
 
         for (var i = 0; i < text.Length; i++)
         {
             var ch = text[i];
+            if (ch == '\r' || (ch == '\n' && (i == 0 || text[i - 1] != '\r'))) line++;
             if (inQuotes)
             {
                 if (ch == '"')

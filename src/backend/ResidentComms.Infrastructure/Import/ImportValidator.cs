@@ -19,7 +19,7 @@ public static partial class ImportValidator
 {
     [GeneratedRegex(@"^\d(\.\d+)?E\+\d+$", RegexOptions.IgnoreCase)] private static partial Regex Scientific();
 
-    /// <summary>SourceRowNumber is the 1-based spreadsheet row (header = row 1, first data row = 2).</summary>
+    /// <summary>SourceRowNumber is the true 1-based spreadsheet row (carried from the reader, so skipped blank rows are accounted for).</summary>
     public static IReadOnlyList<ValidatedRow> Validate(SheetData sheet, ImportMapping map)
     {
         int Col(string name)
@@ -57,7 +57,7 @@ public static partial class ImportValidator
             var key = "ID:" + id;
             if (id.Length > 0 && !seen.Add(key)) codes.Add("DUPLICATE_ID");
 
-            result.Add(new ValidatedRow(n + 2, id, key, name, phone, vars,
+            result.Add(new ValidatedRow(sheet.RowNumbers[n], id, key, name, phone, vars,
                 codes.Count == 0 ? "VALID" : "INVALID", codes));
         }
         return result;
