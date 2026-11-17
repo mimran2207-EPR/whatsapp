@@ -1,0 +1,7 @@
+<Solution>
+  <Folder Name="/tests/">
+    <Project Path="tests/ResidentComms.Db.Tests/ResidentComms.Db.Tests.csproj" />
+    <Project Path="tests/ResidentComms.Domain.Tests/ResidentComms.Domain.Tests.csproj" />
+  </Folder>
+  <Project Path="ResidentComms.Domain/ResidentComms.Domain.csproj" />
+</Solution>
