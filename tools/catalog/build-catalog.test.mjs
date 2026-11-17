@@ -34,3 +34,34 @@ test('profile and access are expanded', () => {
   assert.equal(m17.sensitivity, 'אישי');
   assert.equal(m17.priority, 'required');
 });
+
+test('value_origin keeps both profile columns', () => {
+  const pol = catalog.fields.find(f => f.technical_name === 'channel_permission_state');
+  assert.equal(pol.value_origin, 'מנוע כללים ומדיניות · מחושב לפי כלל בעל גרסה');
+});
+
+test('committed JSON matches a fresh build', () => {
+  const committed = readFileSync(new URL('../../docs/catalog/field-catalog.v1.json', import.meta.url), 'utf8');
+  assert.equal(committed, JSON.stringify(catalog, null, 2) + '\n');
+});
+
+test('per-grain source row counts match §12', () => {
+  const rowsByGrain = {};
+  const seen = new Set();
+  for (const f of catalog.fields) {
+    const k = `${f.grain}|${f.row_id}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    rowsByGrain[f.grain] = (rowsByGrain[f.grain] || 0) + 1;
+  }
+  assert.deepEqual(rowsByGrain, {
+    'Campaign 360': 84,
+    'Message 360': 95,
+    'Recipient Delivery Detail': 8,
+    'Send Attempts': 13,
+    'Message Events': 14,
+    'Template Lifecycle': 14,
+    'Document Delivery': 17,
+    'Import & Audience Audit': 17,
+  });
+});
