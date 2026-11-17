@@ -6,7 +6,7 @@ public readonly record struct DeliveryMergeResult(DeliveryState State, bool Conf
 /// Merges an incoming delivery report into the current state by channel rules, not by arrival order
 /// (spec §9). Contradicting definite results become Unknown with Conflict=true — no invented certainty.
 /// The caller sets DataQuality.Conflicting and keeps every raw event.
-/// The caller passes currentlyConflicting: true when the message's DataQuality is Conflicting.
+/// The caller passes currentlyConflicting: message.delivery_conflict (a stored flag, not derived from data_quality).
 /// A conflict is sticky: while it holds, the result stays Unknown with Conflict=true whatever arrives.
 /// Only an explicit reconciliation (a later phase) may clear it.
 /// </summary>
