@@ -27,6 +27,16 @@ public class PreflightTests
         => Assert.Contains(Preflight.Evaluate(Ok() with { ScheduledAtLocal = new DateTimeOffset(2026, 11, 17, 21, 30, 0, TimeSpan.FromHours(2)) }),
             f => f.Code == "OUTSIDE_SEND_WINDOW" && f.Severity == PreflightSeverity.Warning);
 
+    private static bool Outside(PreflightInput i) => Preflight.Evaluate(i).Any(f => f.Code == "OUTSIDE_SEND_WINDOW");
+    private static PreflightInput At(int h, int m, TimeOnly s, TimeOnly e)
+        => Ok() with { ScheduledAtLocal = new DateTimeOffset(2026, 11, 17, h, m, 0, TimeSpan.FromHours(2)), WindowStart = s, WindowEnd = e };
+
+    [Fact] public void Overnight_window_inside_late_evening() => Assert.False(Outside(At(23, 30, new(22, 0), new(6, 0))));
+    [Fact] public void Overnight_window_outside_midday() => Assert.True(Outside(At(12, 0, new(22, 0), new(6, 0))));
+    [Fact] public void Window_start_boundary_is_inside() => Assert.False(Outside(At(8, 0, new(8, 0), new(20, 0))));
+    [Fact] public void Window_end_boundary_is_outside() => Assert.True(Outside(At(20, 0, new(8, 0), new(20, 0))));
+    [Fact] public void Equal_start_and_end_means_no_window() => Assert.False(Outside(At(3, 0, new(8, 0), new(8, 0))));
+
     [Fact] public void Small_audience_change_is_not_flagged()
         => Assert.DoesNotContain(Preflight.Evaluate(Ok() with { PreviousAudienceSize = 3150 }), f => f.Code == "AUDIENCE_SIZE_CHANGE");
 }
@@ -74,5 +84,33 @@ public class MessageKeyTests
         Assert.Equal(k, MessageKey.For(t, c, "ID:000123", "sms", 1));
         Assert.Matches("^[0-9a-f]{64}$", k);
         Assert.NotEqual(k, MessageKey.For(t, c, "ID:000123", "SMS", 2));
+    }
+}
+
+public class GoldenVectorTests
+{
+    [Fact] public void MessageKey_golden_vector_is_stable()
+    {
+        var t = Guid.Parse("11111111-1111-1111-1111-111111111111"); var c = Guid.Parse("22222222-2222-2222-2222-222222222222");
+        var independent = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(
+            "11111111-1111-1111-1111-111111111111|22222222-2222-2222-2222-222222222222|ID:000123|SMS|1")));
+        var actual = MessageKey.For(t, c, "ID:000123", "SMS", 1);
+        Assert.Equal(independent, actual);
+        Assert.Equal("78b02ed59196bf61334c0f14466b86054bff9bf38edf01a98dd1a0765f2fd4b5", actual);
+    }
+
+    private static ApprovalPackageContent Golden() => new(
+        Guid.Parse("aaaaaaaa-0000-0000-0000-000000000001"), Guid.Parse("bbbbbbbb-0000-0000-0000-000000000002"),
+        "SMS", "שלום {שם הורה}", new Dictionary<string, string> { ["שם ילד"] = "ילדכם" },
+        new DateTimeOffset(2026, 11, 17, 10, 0, 0, TimeSpan.FromHours(2)), 1);
+
+    [Fact] public void ApprovalPackage_canonical_json_and_hash_golden_vector_is_stable()
+    {
+        const string expectedJson = "{\"audience_version_id\":\"bbbbbbbb-0000-0000-0000-000000000002\","
+            + "\"campaign_revision_id\":\"aaaaaaaa-0000-0000-0000-000000000001\",\"channel\":\"SMS\","
+            + "\"content_text\":\"שלום {שם הורה}\",\"field_defaults\":{\"שם ילד\":\"ילדכם\"},"
+            + "\"policy_version\":1,\"scheduled_at\":\"2026-11-17T08:00:00.0000000Z\"}";
+        Assert.Equal(expectedJson, ApprovalPackage.CanonicalJson(Golden()));
+        Assert.Equal("9f2f7591dce8d0029ebf015f07a8ab1dcfe3e8f2bffefcff9ed269be0f5afb57", ApprovalPackage.Hash(Golden()));
     }
 }

@@ -40,7 +40,9 @@ public static class Preflight
         }
 
         var t = TimeOnly.FromDateTime(i.ScheduledAtLocal.DateTime);
-        if (t < i.WindowStart || t >= i.WindowEnd)
+        var inside = i.WindowStart == i.WindowEnd
+            || (i.WindowStart < i.WindowEnd ? t >= i.WindowStart && t < i.WindowEnd : t >= i.WindowStart || t < i.WindowEnd);
+        if (!inside)
             findings.Add(new("OUTSIDE_SEND_WINDOW", PreflightSeverity.Warning, "מועד השליחה מחוץ לחלון השליחה המותר", "אישור ושליחה"));
 
         if (i.CostIsEstimate)

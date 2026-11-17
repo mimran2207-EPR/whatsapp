@@ -22,6 +22,9 @@ public static class ApprovalPackage
     };
 
     public static string Hash(ApprovalPackageContent c)
+        => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(CanonicalJson(c))));
+
+    internal static string CanonicalJson(ApprovalPackageContent c)
     {
         var doc = new SortedDictionary<string, object?>(StringComparer.Ordinal)
         {
@@ -34,7 +37,6 @@ public static class ApprovalPackage
             ["policy_version"] = c.PolicyVersion,
             ["scheduled_at"] = c.ScheduledAt?.UtcDateTime.ToString("O"),
         };
-        var json = JsonSerializer.Serialize(doc, Options);
-        return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(json)));
+        return JsonSerializer.Serialize(doc, Options);
     }
 }
