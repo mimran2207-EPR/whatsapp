@@ -7,5 +7,7 @@
   "compatibility_date": "2026-11-01",
   "assets": {
     "directory": "./public"
-  }
+  },
+  // Non-production branches/PRs are built with `npx wrangler preview`, which requires this block (it may be empty).
+  "previews": {}
 }
