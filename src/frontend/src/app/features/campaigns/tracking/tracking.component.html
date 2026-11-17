@@ -9,8 +9,10 @@
   <!-- Summary for screen readers, at most once every 30s (not on every 5s poll). -->
   <div class="visually-hidden" aria-live="polite">{{ announcement() }}</div>
 
-  @if (error()) {
-    <p class="error-text" role="alert">{{ error() }}</p>
+  @if (fatal()) {
+    <rc-banner kind="danger" [message]="fatal()! + ' · העדכון האוטומטי הופסק.'" />
+  } @else if (error()) {
+    <p class="error-text" role="alert">{{ error() }} · מנסה שוב בעוד כמה שניות</p>
   }
 
   @if (view(); as v) {
@@ -82,7 +84,7 @@
         </table>
       }
     </section>
-  } @else if (!error()) {
+  } @else if (!error() && !fatal()) {
     <p class="muted" role="status">טוען נתוני מעקב…</p>
   }
 </div>

@@ -43,9 +43,24 @@
   background: var(--color-bg-subtle);
 }
 
+.preview {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+
 .preview h3,
 .preview p {
   margin: 0;
+}
+
+.bubble {
+  padding: var(--space-12) var(--space-16);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-surface);
+  box-shadow: var(--shadow-card);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .binding {

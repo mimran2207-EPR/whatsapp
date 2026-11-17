@@ -54,7 +54,8 @@ export interface DraftPatch {
   channel?: 'SMS';
   contentText?: string;
   fieldDefaults?: Record<string, string>;
-  scheduledAt?: string;
+  /** Absent = unchanged; null = clear the schedule (send right after approval). */
+  scheduledAt?: string | null;
 }
 
 export interface Finding {
@@ -92,6 +93,49 @@ export interface ApprovalListItem {
   channel: string | null;
   recipients: number;
   packageHash: string;
+}
+
+export interface ApprovedListItem {
+  campaignId: string;
+  name: string;
+  purpose: Purpose;
+  submittedBy: string;
+  channel: string | null;
+  recipients: number;
+  approvedBy: string;
+  approvedAt: string;
+}
+
+export interface CampaignPreview {
+  recipientName: string | null;
+  recipientPhone: string;
+  text: string;
+  missingFields: string[];
+}
+
+export interface CampaignDetail {
+  campaignId: string;
+  name: string;
+  purpose: Purpose;
+  state: string;
+  createdBy: string;
+  revisionId: string;
+  revisionNo: number;
+  channel: string | null;
+  contentText: string | null;
+  fieldDefaults: Record<string, string>;
+  scheduledAt: string | null;
+  audience: {
+    audienceVersionId: string;
+    importRunId: string | null;
+    fileName: string | null;
+    rowCount: number;
+    validCount: number;
+    invalidCount: number;
+    eligibleRecipients: number;
+    fieldNames: string[];
+  } | null;
+  preview: CampaignPreview | null;
 }
 
 export interface ReleaseResult {
@@ -146,6 +190,15 @@ export class ApiClient {
 
   listCampaigns(): Observable<CampaignListItem[]> {
     return this.http.get<CampaignListItem[]>('/v1/campaigns');
+  }
+
+  /** Approved but not yet released (approver only; others get []). */
+  listApproved(): Observable<ApprovedListItem[]> {
+    return this.http.get<ApprovedListItem[]>('/v1/approvals/approved');
+  }
+
+  campaign(campaignId: string): Observable<CampaignDetail> {
+    return this.http.get<CampaignDetail>(`/v1/campaigns/${encodeURIComponent(campaignId)}`);
   }
 
   listApprovals(): Observable<ApprovalListItem[]> {

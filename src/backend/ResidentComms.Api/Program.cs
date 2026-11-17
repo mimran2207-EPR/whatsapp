@@ -21,6 +21,7 @@ builder.Services.TryAddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<ImportLimits>();
 builder.Services.AddSingleton<AudienceRepository>();
 builder.Services.AddSingleton<CampaignRepository>();
+builder.Services.AddSingleton<CampaignDetailRepository>();
 builder.Services.AddSingleton<ReleaseService>();
 builder.Services.AddSingleton<ResidentComms.Infrastructure.Events.ProviderEventProcessor>();
 builder.Services.AddSingleton<TrackingQueries>();

@@ -1,3 +1,4 @@
+using System.Text.Json;
 using ResidentComms.Api.Auth;
 using ResidentComms.Infrastructure.Repositories;
 
@@ -9,6 +10,8 @@ public static class CampaignEndpoints
     public sealed record PatchDraftRequest(Guid? AudienceVersionId, string? Channel, string? ContentText, Dictionary<string, string>? FieldDefaults, DateTimeOffset? ScheduledAt);
     public sealed record SubmitRequest(string? Note);
     public sealed record ApproveRequest(string? PackageHash);
+
+    private static readonly System.Text.Json.JsonSerializerOptions Json = new(System.Text.Json.JsonSerializerDefaults.Web);
 
     private static readonly HashSet<string> Purposes = ["SERVICE", "OPERATIONAL", "PUBLIC_INFO", "EMERGENCY", "PROMOTIONAL"];
 
@@ -28,6 +31,18 @@ public static class CampaignEndpoints
             }));
         });
 
+        // One campaign: draft fields for resuming the wizard, and a server-rendered masked preview (the approver sees the exact text).
+        v1.MapGet("/campaigns/{id:guid}", async (Guid id, ICurrentUser user, CampaignDetailRepository details) =>
+        {
+            if (user.Role is not ("creator" or "approver" or "analyst")) return ApiResults.ForbiddenRole();
+            var d = await details.GetAsync(user.TenantId, id); // tenant from the token only
+            return d is null ? ApiResults.Error("NOT_FOUND", StatusCodes.Status404NotFound) : Results.Ok(d);
+        });
+
+        // Approved but not yet released: the approver can release them (e.g. after a release that failed on the send window).
+        v1.MapGet("/approvals/approved", async (ICurrentUser user, CampaignDetailRepository details) =>
+            ApiResults.CanApprove(user) ? Results.Ok(await details.ListApprovedAsync(user.TenantId, user.DepartmentId)) : Results.Ok(Array.Empty<object>()));
+
         v1.MapGet("/approvals", async (ICurrentUser user, CampaignRepository repo) =>
             ApiResults.CanApprove(user) ? Results.Ok(await repo.ListApprovalsAsync(user.TenantId, user.UserId, user.DepartmentId)) : Results.Ok(Array.Empty<object>()));
 
@@ -40,11 +55,18 @@ public static class CampaignEndpoints
             return Results.Json(new { campaignId, revisionId }, statusCode: StatusCodes.Status201Created);
         });
 
-        v1.MapPatch("/campaigns/{id:guid}/draft", async (Guid id, PatchDraftRequest req, ICurrentUser user, CampaignRepository repo) =>
+        // Bound as raw JSON so an explicit "scheduledAt": null (clear the schedule) can be told apart from an absent field (unchanged).
+        v1.MapPatch("/campaigns/{id:guid}/draft", async (Guid id, JsonElement body, ICurrentUser user, CampaignRepository repo) =>
         {
             if (!ApiResults.CanAuthor(user)) return ApiResults.ForbiddenRole();
+            if (body.ValueKind != JsonValueKind.Object) return ApiResults.Error("VALIDATION_FAILED", StatusCodes.Status400BadRequest);
+            PatchDraftRequest? req;
+            try { req = body.Deserialize<PatchDraftRequest>(Json); }
+            catch (JsonException) { return ApiResults.Error("VALIDATION_FAILED", StatusCodes.Status400BadRequest); }
+            if (req is null) return ApiResults.Error("VALIDATION_FAILED", StatusCodes.Status400BadRequest);
+            var clear = body.TryGetProperty("scheduledAt", out var sa) && sa.ValueKind == JsonValueKind.Null;
             var r = await repo.PatchDraftAsync(user.TenantId, id,
-                new DraftPatch(req.AudienceVersionId, req.Channel, req.ContentText, req.FieldDefaults, req.ScheduledAt));
+                new DraftPatch(req.AudienceVersionId, req.Channel, req.ContentText, req.FieldDefaults, req.ScheduledAt, clear));
             return ApiResults.From(r, o => Results.Ok(new { revisionId = o.RevisionId, approvalInvalidated = o.ApprovalInvalidated }));
         });
 

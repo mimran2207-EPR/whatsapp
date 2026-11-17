@@ -1,6 +1,7 @@
 import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { ApiClient, CampaignListItem } from '../../../core/api.client';
+import { AuthService } from '../../../core/auth.service';
 import { apiError } from '../../../core/error-messages';
 import { asChannel, formatNumber, formatTime, purposeLabel, stateLabel } from '../../../core/format';
 import { ButtonComponent } from '../../../ui/button/button.component';
@@ -43,7 +44,7 @@ import { GridRowComponent } from '../../../ui/grid-row/grid-row.component';
             <rc-grid-row role="row">
               <span class="cell cell--wide" role="cell">
                 @if (link(c); as l) {
-                  <a class="link-btn" [routerLink]="l">{{ c.name }}</a>
+                  <a class="link-btn" [routerLink]="l" [queryParams]="linkQuery(c)">{{ c.name }}</a>
                 } @else {
                   {{ c.name }}
                 }
@@ -76,6 +77,7 @@ import { GridRowComponent } from '../../../ui/grid-row/grid-row.component';
 })
 export class CampaignListComponent {
   private readonly api = inject(ApiClient);
+  private readonly auth = inject(AuthService);
   protected readonly rows = signal<CampaignListItem[] | null>(null);
   protected readonly error = signal<string | null>(null);
 
@@ -103,6 +105,12 @@ export class CampaignListComponent {
   protected link(c: CampaignListItem): string[] | null {
     if (c.state === 'RELEASED') return ['/campaigns', c.campaignId, 'tracking'];
     if (c.state === 'DRAFT') return ['/campaigns', c.campaignId, 'edit'];
+    // Waiting for approval or for release: the approvals screen (approver) handles both.
+    if ((c.state === 'SUBMITTED' || c.state === 'APPROVED') && this.auth.user()?.role === 'approver') return ['/approvals'];
     return null;
+  }
+
+  protected linkQuery(c: CampaignListItem): Record<string, string> | null {
+    return c.state === 'SUBMITTED' || c.state === 'APPROVED' ? { campaign: c.campaignId } : null;
   }
 }

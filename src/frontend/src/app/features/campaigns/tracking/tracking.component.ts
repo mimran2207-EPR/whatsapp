@@ -31,6 +31,8 @@ export class TrackingComponent {
   private readonly api = inject(ApiClient);
   protected readonly view = signal<TrackingView | null>(null);
   protected readonly error = signal<string | null>(null);
+  /** Permanent failure (not found / forbidden): polling has stopped. */
+  protected readonly fatal = signal<string | null>(null);
   protected readonly announcement = signal('');
 
   protected readonly segments = DELIVERY_SEGMENTS;
@@ -60,6 +62,7 @@ export class TrackingComponent {
   private start(id: string): void {
     this.poller?.stop();
     this.view.set(null);
+    this.fatal.set(null);
     this.poller = new VisibilityPoller(() => this.refresh(id), 5000);
     this.poller.start();
   }
@@ -74,7 +77,15 @@ export class TrackingComponent {
       );
       if (said) this.announcement.set(said);
     } catch (e) {
-      this.error.set(apiError(e).messageHe);
+      const err = apiError(e);
+      if (err.status === 404 || err.status === 403) {
+        // Will not get better by asking again every 5s: stop and say so.
+        this.poller?.stop();
+        this.fatal.set(err.messageHe);
+        this.error.set(null);
+        return;
+      }
+      this.error.set(err.messageHe); // transient (network, 5xx): keep polling
       throw e;
     }
   }

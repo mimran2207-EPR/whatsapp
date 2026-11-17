@@ -1,4 +1,4 @@
-import { HttpContext, HttpContextToken, HttpInterceptorFn } from '@angular/common/http';
+import { HttpContext, HttpContextToken, HttpErrorResponse, HttpInterceptorFn } from '@angular/common/http';
 
 /** The Idempotency-Key for one user action. Unset → the interceptor issues one and pins it to the request. */
 export const IDEMPOTENCY_KEY = new HttpContextToken<string | null>(() => null);
@@ -27,7 +27,7 @@ export const idempotencyInterceptor: HttpInterceptorFn = (req, next) => {
 
 /**
  * Key holder for one repeatable user action (a button). The same payload gets the same key until the action
- * succeeds (`settle`), so a double click or a "נסו שוב" after a network error replays instead of executing twice.
+ * succeeds (`settle`) or gets a definite answer (`fail`); a double click or a retry after a network error (no response) replays instead of executing twice.
  * A changed payload is a different action and gets a new key (the server answers 409 to a reused key with a new body).
  */
 export class ActionKey {
@@ -40,6 +40,16 @@ export class ActionKey {
       this.fingerprint = fingerprint;
     }
     return this.key;
+  }
+
+  /**
+   * Key policy after a failed attempt: keep the key only when there was no HTTP response (status 0: network error,
+   * timeout, connection reset) — the server may or may not have executed it, and a replay is the safe way to find out.
+   * Any definite response (4xx or 5xx) ends the action; the next click is a new action with a new key, so a stored
+   * error is never replayed forever. Server state checks guard against double execution.
+   */
+  fail(err: unknown): void {
+    if (!(err instanceof HttpErrorResponse && err.status === 0)) this.settle();
   }
 
   settle(): void {

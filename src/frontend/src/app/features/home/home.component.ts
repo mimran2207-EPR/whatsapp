@@ -1,7 +1,7 @@
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { forkJoin } from 'rxjs';
-import { ApiClient, ApprovalListItem, CampaignListItem } from '../../core/api.client';
+import { ApiClient, ApprovalListItem, ApprovedListItem, CampaignListItem } from '../../core/api.client';
 import { AuthService } from '../../core/auth.service';
 import { apiError } from '../../core/error-messages';
 import { asChannel, formatNumber, formatTime, stateLabel } from '../../core/format';
@@ -39,6 +39,7 @@ export class HomeComponent {
 
   protected readonly campaigns = signal<CampaignListItem[] | null>(null);
   protected readonly approvals = signal<ApprovalListItem[]>([]);
+  protected readonly ready = signal<ApprovedListItem[]>([]);
   protected readonly error = signal<string | null>(null);
 
   protected readonly fmt = formatNumber;
@@ -63,16 +64,24 @@ export class HomeComponent {
       route: ['/approvals'],
       query: { campaign: a.campaignId },
     })),
+    ...this.ready().map((a) => ({
+      key: 'r-' + a.campaignId,
+      text: `אושר וממתין לשליחה: ${a.name}`,
+      meta: `${formatNumber(a.recipients)} נמענים`,
+      route: ['/approvals'],
+      query: { campaign: a.campaignId },
+    })),
     ...(this.campaigns() ?? [])
       .filter((c) => c.state === 'DRAFT')
       .map((c) => ({ key: 'd-' + c.campaignId, text: `טיוטה: ${c.name}`, meta: 'להמשך עריכה', route: ['/campaigns', c.campaignId, 'edit'] })),
   ]);
 
   constructor() {
-    forkJoin({ campaigns: this.api.listCampaigns(), approvals: this.api.listApprovals() }).subscribe({
-      next: ({ campaigns, approvals }) => {
+    forkJoin({ campaigns: this.api.listCampaigns(), approvals: this.api.listApprovals(), ready: this.api.listApproved() }).subscribe({
+      next: ({ campaigns, approvals, ready }) => {
         this.campaigns.set(campaigns);
         this.approvals.set(approvals);
+        this.ready.set(ready);
       },
       error: (e: unknown) => {
         this.campaigns.set([]);
@@ -84,6 +93,12 @@ export class HomeComponent {
   protected campaignLink(c: CampaignListItem): string[] | null {
     if (c.state === 'RELEASED') return ['/campaigns', c.campaignId, 'tracking'];
     if (c.state === 'DRAFT') return ['/campaigns', c.campaignId, 'edit'];
+    // Waiting for approval or for release: the approvals screen (approver) handles both.
+    if ((c.state === 'SUBMITTED' || c.state === 'APPROVED') && this.auth.user()?.role === 'approver') return ['/approvals'];
     return null;
+  }
+
+  protected linkQuery(c: CampaignListItem): Record<string, string> | null {
+    return c.state === 'SUBMITTED' || c.state === 'APPROVED' ? { campaign: c.campaignId } : null;
   }
 }

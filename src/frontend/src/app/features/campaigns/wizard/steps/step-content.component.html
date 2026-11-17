@@ -1,16 +1,16 @@
 <div class="stack">
-  <h2 class="t-h2-20 section-title">מה כותבים?</h2>
+  <h2 id="wizard-step-heading" tabindex="-1" class="t-h2-20 section-title">מה כותבים?</h2>
 
   <div class="split">
     <div class="stack">
       <rc-text-field label="תוכן הודעת ה-SMS" helper="שדות אישיים נכתבים בסוגריים מסולסלים, לדוגמה {שם}">
-        <textarea #editor rows="7" maxlength="2000" [value]="s.content()" (input)="onInput($event)"></textarea>
+        <textarea #editor rows="7" maxlength="2000" [value]="s.content()" [disabled]="s.locked()" (input)="onInput($event)"></textarea>
       </rc-text-field>
 
       @if (s.fieldColumns().length > 0) {
         <div class="chips" role="group" aria-label="הוספת שדה אישי">
           @for (f of s.fieldColumns(); track f) {
-            <button type="button" class="chip" (click)="insert(f)">+ {{ f }}</button>
+            <button type="button" class="chip" [disabled]="s.locked()" (click)="insert(f)">+ {{ f }}</button>
           }
         </div>
       }
@@ -30,7 +30,7 @@
           <legend class="t-body-14-medium">ערכי ברירת מחדל לשדות חסרים</legend>
           @for (f of s.fieldColumns(); track f) {
             <rc-text-field [label]="f">
-              <input type="text" maxlength="200" [value]="defaultFor(f)" (input)="onDefault(f, $event)" />
+              <input type="text" maxlength="200" [value]="defaultFor(f)" [disabled]="s.locked()" (input)="onDefault(f, $event)" />
             </rc-text-field>
           }
         </fieldset>
@@ -41,15 +41,19 @@
       <h3 id="pv-title" class="t-body-14-medium">תצוגה מקדימה</h3>
       @if (recipient(); as r) {
         <p class="preview__to num">אל: <bdi>{{ r.name || 'לא ידוע' }}</bdi> · <bdi dir="ltr">{{ r.phone }}</bdi> (ממוסך)</p>
+        <div class="bubble">
+          @for (p of parts(); track $index) {
+            <span [class]="'pv pv--' + p.kind">{{ p.text }}</span>
+          }
+        </div>
+        <p class="preview__note">התצוגה ממלאת את שם הנמען מהדוגמה הממוסכת ואת ערכי ברירת המחדל. הטקסט הסופי מורכב בשרת.</p>
+      } @else if (s.serverPreview(); as sp) {
+        <p class="preview__to num">אל: <bdi>{{ sp.recipientName || 'לא ידוע' }}</bdi> · <bdi dir="ltr">{{ sp.recipientPhone }}</bdi> (ממוסך)</p>
+        <div class="bubble">{{ sp.text }}</div>
+        <p class="preview__note">כפי שהשרת מרכיב את ההודעה לנמען הראשון (לפי הגרסה השמורה).</p>
       } @else {
         <p class="preview__to">אין נמען תקין בדוגמה</p>
       }
-      <div class="bubble">
-        @for (p of parts(); track $index) {
-          <span [class]="'pv pv--' + p.kind">{{ p.text }}</span>
-        }
-      </div>
-      <p class="preview__note">התצוגה ממלאת את שם הנמען מהדוגמה הממוסכת ואת ערכי ברירת המחדל. הטקסט הסופי מורכב בשרת.</p>
     </section>
   </div>
 </div>

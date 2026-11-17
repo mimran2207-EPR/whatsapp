@@ -13,8 +13,8 @@ import { PREFLIGHT_STEP, stepIndexFor, WizardStore } from '../wizard.store';
   template: `
     <div class="stack">
       <div class="page-head">
-        <h2 class="t-h2-20 section-title">בדיקה לפני הגשה</h2>
-        <rc-button class="page-head__actions" variant="secondary" [disabled]="s.preflightPending()" (click)="s.refreshPreflight()">
+        <h2 id="wizard-step-heading" tabindex="-1" class="t-h2-20 section-title">בדיקה לפני הגשה</h2>
+        <rc-button class="page-head__actions" variant="secondary" [disabled]="s.preflightPending() || s.locked()" (click)="s.refreshPreflight()">
           בדיקה חוזרת
         </rc-button>
       </div>
@@ -42,6 +42,8 @@ import { PREFLIGHT_STEP, stepIndexFor, WizardStore } from '../wizard.store';
             <li><rc-preflight-item kind="passed" title="לא נמצאו חסמים — אפשר להמשיך להגשה" /></li>
           }
         </ul>
+      } @else if (s.locked()) {
+        <p class="muted">המשלוח נעול לעריכה; הבדיקה רצה מחדש לאחר אישור עריכה.</p>
       } @else {
         <p class="muted">הבדיקה תרוץ כשהקהל, הערוץ והתוכן יהיו מלאים.</p>
       }

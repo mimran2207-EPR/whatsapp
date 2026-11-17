@@ -11,7 +11,7 @@ import { WizardStore } from '../wizard.store';
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div class="stack">
-      <h2 class="t-h2-20 section-title">סיכום מחייב והגשה לאישור</h2>
+      <h2 id="wizard-step-heading" tabindex="-1" class="t-h2-20 section-title">סיכום מחייב והגשה לאישור</h2>
 
       @if (s.submittedHash(); as hash) {
         <rc-banner kind="success" [message]="'המשלוח הוגש לאישור. חבילת אישור ' + hash.slice(0, 12) + '…'" />
@@ -19,23 +19,12 @@ import { WizardStore } from '../wizard.store';
 
       <p class="binding t-body-lg-16">{{ binding() }}</p>
 
-      <fieldset class="schedule" [disabled]="!!s.submittedHash()">
+      <fieldset class="schedule" [disabled]="s.locked()">
         <legend class="t-body-14-medium">מועד השליחה</legend>
         <label class="opt">
-          <input
-            type="radio"
-            name="when"
-            value="now"
-            [checked]="s.scheduleMode() === 'now'"
-            [disabled]="s.scheduleLocked()"
-            [attr.aria-describedby]="s.scheduleLocked() ? 'when-locked' : null"
-            (change)="mode('now')"
-          />
+          <input type="radio" name="when" value="now" [checked]="s.scheduleMode() === 'now'" (change)="mode('now')" />
           מיד לאחר האישור
         </label>
-        @if (s.scheduleLocked()) {
-          <span id="when-locked" class="muted">נשמר מועד מתוזמן לגרסה זו; אפשר לשנות את המועד אך לא לבטל אותו.</span>
-        }
         <label class="opt">
           <input type="radio" name="when" value="at" [checked]="s.scheduleMode() === 'at'" (change)="mode('at')" />
           במועד מתוזמן
@@ -48,7 +37,7 @@ import { WizardStore } from '../wizard.store';
       </fieldset>
 
       <rc-text-field label="הערה למאשר (לא חובה)">
-        <textarea rows="3" maxlength="500" [value]="s.note()" [disabled]="!!s.submittedHash()" (input)="note($event)"></textarea>
+        <textarea rows="3" maxlength="500" [value]="s.note()" [disabled]="s.locked()" (input)="note($event)"></textarea>
       </rc-text-field>
     </div>
   `,
@@ -81,6 +70,10 @@ export class StepSubmitComponent {
 
   protected readonly binding = computed(() => {
     const p = this.s.preflight();
+    const when0 = this.s.scheduleMode() === 'at' && this.s.scheduleAt() ? `במועד ${formatDateTime(new Date(this.s.scheduleAt()).toISOString())}` : 'מיד לאחר האישור';
+    const n = this.s.serverEligible();
+    if (!p && this.s.locked() && n !== null)
+      return `המשלוח "${this.s.name()}" (${purposeLabel(this.s.purpose())}) הוגש לאישור: SMS ל-${formatNumber(n)} נמענים, ${when0}. עריכה תבטל את ההגשה.`;
     if (!p) return 'הסיכום יוצג לאחר בדיקה תקינה.';
     const when =
       this.s.scheduleMode() === 'at' && this.s.scheduleAt() ? `במועד ${formatDateTime(new Date(this.s.scheduleAt()).toISOString())}` : 'מיד לאחר האישור';

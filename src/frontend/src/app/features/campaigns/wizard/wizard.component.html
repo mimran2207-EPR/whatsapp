@@ -21,6 +21,20 @@
     </ol>
   </nav>
 
+  <div class="visually-hidden step-announce" aria-live="polite">{{ stepAnnouncement() }}</div>
+
+  @if (s.serverState() === 'RELEASED') {
+    <rc-banner kind="info" message="המשלוח שוחרר לשליחה ואינו ניתן לעריכה." actionLabel="למעקב" (action)="openTracking()" />
+  } @else if (s.locked()) {
+    <div class="locked" role="status">
+      <rc-banner kind="info" [message]="confirmEdit() ? 'עריכה תבטל את ההגשה (ואישור קיים, אם יש) ותחייב בדיקה, הגשה ואישור מחדש.' : 'המשלוח הוגש לאישור ונעול לעריכה.'" />
+      <rc-button variant="secondary" (click)="startEdit()">{{ confirmEdit() ? 'עריכה תבטל את ההגשה — להמשיך' : 'עריכה' }}</rc-button>
+      @if (confirmEdit()) {
+        <rc-button variant="ghost" (click)="confirmEdit.set(false)">השארת ההגשה</rc-button>
+      }
+    </div>
+  }
+
   @if (s.approvalInvalidated()) {
     <rc-banner kind="warning" message="שינית את המשלוח אחרי ההגשה. האישור הקודם בוטל ויש להגיש מחדש." />
   }
@@ -54,7 +68,7 @@
         }
       </div>
 
-      @if (!s.submittedHash()) {
+      @if (!s.locked()) {
         <div class="actions">
           @if (s.step() > 0) {
             <rc-button variant="ghost" [disabled]="s.busy()" (click)="back()">חזרה</rc-button>

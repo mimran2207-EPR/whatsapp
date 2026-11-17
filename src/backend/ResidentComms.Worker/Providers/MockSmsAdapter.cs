@@ -20,6 +20,9 @@ public sealed class MockSmsOptions
     public string? SigningKey { get; set; }
     public string CallbackBaseUrl { get; set; } = "http://localhost:5080";
 
+    /// <summary>Webhook redelivery schedule (ms) after a refused or failed POST, like a real provider's retries.</summary>
+    public int[] WebhookRetryDelaysMs { get; set; } = [1000, 2000, 4000, 8000, 16000];
+
     /// <summary>Test hook: force the outcome (ACCEPTED/REJECTED/AMBIGUOUS/LOCAL_FAILURE) for specific messages.</summary>
     public ConcurrentDictionary<Guid, string> ForcedOutcomes { get; } = new();
 }
@@ -87,11 +90,29 @@ public sealed class MockSmsAdapter : ISmsAdapter
                 {
                     await Task.Delay(delay);
                     var body = JsonSerializer.Serialize(new { providerEventId = $"{pm}:{type}", providerMessageId = pm, type, occurredAt = DateTimeOffset.UtcNow });
-                    await Post(body);
-                    if (dup) { await Task.Delay(100); await Post(body); }
+                    await PostWithRetry(body, type, pm);
+                    if (dup) { await Task.Delay(100); await PostWithRetry(body, type, pm); }
                 }
                 catch (Exception ex) { _log?.LogWarning(ex, "Mock provider could not deliver event {Type} for {Pm}", type, pm); }
             });
+    }
+
+    /// <summary>
+    /// An event can reach the API before the dispatcher has committed provider_message_id; the API then refuses it
+    /// (422, nothing to attribute it to). Like a real provider, redeliver on the configured schedule instead of dropping it.
+    /// Redelivery is safe: the API deduplicates by provider event id.
+    /// </summary>
+    private async Task PostWithRetry(string body, string type, string pm)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            try { await Post(body); return; }
+            catch (Exception ex) when (attempt < _o.WebhookRetryDelaysMs.Length)
+            {
+                _log?.LogInformation(ex, "Mock provider will redeliver event {Type} for {Pm} (attempt {Attempt})", type, pm, attempt + 2);
+                await Task.Delay(_o.WebhookRetryDelaysMs[attempt]);
+            }
+        }
     }
 
     private Task Post(string body)

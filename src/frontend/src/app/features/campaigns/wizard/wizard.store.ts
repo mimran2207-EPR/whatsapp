@@ -2,6 +2,8 @@ import { computed, inject, Injectable, signal } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
 import {
   ApiClient,
+  CampaignDetail,
+  CampaignPreview,
   DraftPatch,
   Finding,
   ImportErrorRow,
@@ -33,24 +35,26 @@ export function stepIndexFor(label: string): number {
   return STEPS.findIndex((s) => s.label === label);
 }
 
-/** What survives a reload (sessionStorage, per campaign). The file itself is not kept. */
+/** Local extras that the server does not keep (the import sample, the mapping, the current step). Per campaign, sessionStorage. */
 interface Snapshot {
   campaignId: string;
-  name: string;
-  purpose: Purpose;
   fileName: string | null;
   mapping: ImportMapping;
   summary: ImportSummary | null;
-  content: string;
-  defaults: Record<string, string>;
-  scheduleMode: 'now' | 'at';
-  scheduleAt: string;
   step: number;
   maxStep: number;
 }
 
 const EMPTY_MAPPING: ImportMapping = { idColumn: '', nameColumn: null, phoneColumn: '', variableColumns: [] };
 const snapshotKey = (id: string) => `rc.wizard.${id}`;
+
+/** "2026-11-18T09:30:00Z" → "2026-11-18T11:30" in the browser's zone, for <input type="datetime-local">. */
+function toLocalInput(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
 
 /** State and server actions for one campaign draft. Provided by WizardComponent, shared by its step components. */
 @Injectable()
@@ -73,7 +77,17 @@ export class WizardStore {
   readonly scheduleMode = signal<'now' | 'at'>('now');
   readonly scheduleAt = signal('');
   readonly note = signal('');
-  readonly scheduleLocked = signal(false);
+  /** Field names known from the server (resume in another browser, where the local mapping is not available). */
+  readonly serverFields = signal<string[]>([]);
+  readonly serverPreview = signal<CampaignPreview | null>(null);
+  /** Server lifecycle state: DRAFT / SUBMITTED / APPROVED / RELEASED. */
+  readonly serverState = signal('DRAFT');
+  /** Read-only after submit (or when resumed in a non-draft state) until the user confirms that editing cancels the submission. */
+  readonly locked = signal(false);
+  /** Eligible recipients as last reported by the server (shown while locked, when no preflight runs). */
+  readonly serverEligible = signal<number | null>(null);
+  /** Step set by a resume (not by the user): the UI does not move focus for it. */
+  readonly restoredStep = signal<number | null>(null);
 
   // Server results and UI state
   readonly preflight = signal<PreflightReport | null>(null);
@@ -89,18 +103,22 @@ export class WizardStore {
   private readonly keys = { create: new ActionKey(), import: new ActionKey(), patch: new ActionKey(), preflight: new ActionKey(), submit: new ActionKey() };
   private saving: Promise<unknown> = Promise.resolve();
   private lastSaved: string | null = null;
+  /** The server holds a schedule for this revision: choosing "מיד" must send an explicit null to clear it. */
+  private serverHasSchedule = false;
+  private preflightSeq = 0;
 
-  /** Columns that can be used as {fields}: the mapped name column plus the mapped variable columns. */
+  /** Columns that can be used as {fields}: the mapped name and variable columns, or the server's list after a remote resume. */
   readonly fieldColumns = computed(() => {
-    const m = this.summary() ? this.mapping() : null;
-    if (!m) return [];
+    if (!this.summary()) return [];
+    const m = this.mapping();
+    if (!m.idColumn) return this.serverFields();
     return [...(m.nameColumn ? [m.nameColumn] : []), ...m.variableColumns.filter((c) => c !== m.nameColumn)];
   });
 
   readonly blockers = computed<Finding[]>(() => (this.preflight()?.findings ?? []).filter((f) => f.severity === 'BLOCKER'));
 
   readonly canImport = computed(
-    () => !!this.name().trim() && !!this.file() && !!this.mapping().idColumn && !!this.mapping().phoneColumn && !this.busy(),
+    () => !this.locked() && !!this.name().trim() && !!this.file() && !!this.mapping().idColumn && !!this.mapping().phoneColumn && !this.busy(),
   );
 
   readonly stepStates = computed<StepState[]>(() =>
@@ -114,6 +132,7 @@ export class WizardStore {
 
   /* ---------- Resume ---------- */
 
+  /** Loads the draft from the server (works in any browser); local extras (sample, mapping, step) come from sessionStorage if present. */
   resume(campaignId: string): void {
     this.campaignId.set(campaignId);
     let snap: Snapshot | null = null;
@@ -122,32 +141,58 @@ export class WizardStore {
     } catch {
       snap = null;
     }
-    if (snap && snap.campaignId === campaignId) {
-      this.name.set(snap.name);
-      this.purpose.set(snap.purpose);
-      this.fileName.set(snap.fileName);
-      this.mapping.set(snap.mapping);
-      this.summary.set(snap.summary);
-      this.content.set(snap.content);
-      this.defaults.set(snap.defaults);
-      this.scheduleMode.set(snap.scheduleMode);
-      this.scheduleAt.set(snap.scheduleAt);
-      this.maxStep.set(snap.maxStep);
-      this.step.set(snap.step);
-      if (snap.step >= PREFLIGHT_STEP) void this.refreshPreflight();
-    } else {
-      // No local snapshot (another tab or browser): only the name is known, from the list.
-      this.api.listCampaigns().subscribe({
-        next: (rows) => {
-          const c = rows.find((r) => r.campaignId === campaignId);
-          if (c) {
-            this.name.set(c.name);
-            this.purpose.set(c.purpose);
-          }
-        },
-        error: () => undefined,
-      });
+    this.api.campaign(campaignId).subscribe({
+      next: (d) => this.applyDetail(d, snap && snap.campaignId === campaignId ? snap : null),
+      error: (e: unknown) => this.error.set(apiError(e)),
+    });
+  }
+
+  private applyDetail(d: CampaignDetail, snap: Snapshot | null): void {
+    this.name.set(d.name);
+    this.purpose.set(d.purpose);
+    this.serverState.set(d.state);
+    this.content.set(d.contentText ?? '');
+    this.defaults.set({ ...d.fieldDefaults });
+    this.serverPreview.set(d.preview);
+    this.serverHasSchedule = !!d.scheduledAt;
+    this.scheduleMode.set(d.scheduledAt ? 'at' : 'now');
+    this.scheduleAt.set(d.scheduledAt ? toLocalInput(d.scheduledAt) : '');
+
+    const a = d.audience;
+    if (a) {
+      this.serverFields.set(a.fieldNames);
+      this.serverEligible.set(a.eligibleRecipients);
+      const local = snap?.summary?.audienceVersionId === a.audienceVersionId ? snap : null;
+      if (local?.summary) {
+        this.summary.set(local.summary);
+        this.mapping.set(local.mapping);
+        this.fileName.set(local.fileName);
+      } else {
+        this.mapping.set({ ...EMPTY_MAPPING });
+        this.fileName.set(a.fileName);
+        this.summary.set({
+          importRunId: a.importRunId ?? '',
+          audienceId: '',
+          audienceVersionId: a.audienceVersionId,
+          rowCount: a.rowCount,
+          validCount: a.validCount,
+          invalidCount: a.invalidCount,
+          codes: {},
+          sample: [],
+        });
+      }
     }
+
+    const draft = d.state === 'DRAFT';
+    this.locked.set(!draft);
+    const reached = !draft ? SUBMIT_STEP : d.contentText ? PREFLIGHT_STEP : a ? 2 : 0;
+    this.maxStep.set(Math.max(reached, snap?.maxStep ?? 0));
+    const step = !draft ? SUBMIT_STEP : Math.min(snap?.step ?? reached, this.maxStep());
+    this.restoredStep.set(step);
+    this.step.set(step);
+    // What the server holds now counts as saved: resuming must not PATCH by itself.
+    this.lastSaved = JSON.stringify(this.draftBody());
+    if (draft && this.step() >= PREFLIGHT_STEP) void this.refreshPreflight();
   }
 
   private persist(): void {
@@ -155,15 +200,9 @@ export class WizardStore {
     if (!id) return;
     const snap: Snapshot = {
       campaignId: id,
-      name: this.name(),
-      purpose: this.purpose(),
       fileName: this.fileName(),
       mapping: this.mapping(),
       summary: this.summary(),
-      content: this.content(),
-      defaults: this.defaults(),
-      scheduleMode: this.scheduleMode(),
-      scheduleAt: this.scheduleAt(),
       step: this.step(),
       maxStep: this.maxStep(),
     };
@@ -174,9 +213,17 @@ export class WizardStore {
     }
   }
 
+  /** Editing after submit cancels the submission: the next PATCH creates a new revision and invalidates any approval. */
+  unlockForEdit(): void {
+    if (this.serverState() === 'RELEASED') return;
+    this.locked.set(false);
+    this.submittedHash.set(null);
+  }
+
   /* ---------- Step 1: file and mapping ---------- */
 
   async chooseFile(f: File): Promise<void> {
+    if (this.locked()) return;
     this.file.set(f);
     this.fileName.set(f.name);
     this.summary.set(null);
@@ -207,15 +254,20 @@ export class WizardStore {
     }));
   }
 
-  /** Creates the campaign once (idempotent per name/purpose until it succeeds). */
+  /** Creates the campaign once. The key is reused only after a failure with no response. */
   private async ensureCampaign(): Promise<string> {
     const existing = this.campaignId();
     if (existing) return existing;
     const body = { name: this.name().trim(), purpose: this.purpose() };
-    const r = await firstValueFrom(this.api.createCampaign(body, this.keys.create.for(JSON.stringify(body))));
-    this.keys.create.settle();
-    this.campaignId.set(r.campaignId);
-    return r.campaignId;
+    try {
+      const r = await firstValueFrom(this.api.createCampaign(body, this.keys.create.for(JSON.stringify(body))));
+      this.keys.create.settle();
+      this.campaignId.set(r.campaignId);
+      return r.campaignId;
+    } catch (e) {
+      this.keys.create.fail(e);
+      throw e;
+    }
   }
 
   async runImport(): Promise<boolean> {
@@ -225,9 +277,14 @@ export class WizardStore {
       const id = await this.ensureCampaign();
       const m = this.mapping();
       const fp = JSON.stringify([f.name, f.size, f.lastModified, m]);
-      const s = await firstValueFrom(this.api.importFile(f, m, this.name().trim(), this.keys.import.for(fp)));
-      this.keys.import.settle();
-      this.summary.set(s);
+      try {
+        const s = await firstValueFrom(this.api.importFile(f, m, this.name().trim(), this.keys.import.for(fp)));
+        this.keys.import.settle();
+        this.summary.set(s);
+      } catch (e) {
+        this.keys.import.fail(e);
+        throw e;
+      }
       this.importErrors.set(null);
       await this.saveDraft();
       return id;
@@ -236,7 +293,7 @@ export class WizardStore {
 
   async loadImportErrors(): Promise<void> {
     const s = this.summary();
-    if (!s) return;
+    if (!s?.importRunId) return;
     try {
       this.importErrors.set(await firstValueFrom(this.api.importErrors(s.importRunId)));
     } catch (e) {
@@ -255,30 +312,37 @@ export class WizardStore {
     }
     if (this.content().trim()) body.contentText = this.content();
     const cols = new Set(this.fieldColumns());
-    const defaults = Object.fromEntries(Object.entries(this.defaults()).filter(([k, v]) => cols.has(k) && v !== ''));
-    body.fieldDefaults = defaults;
+    body.fieldDefaults = Object.fromEntries(Object.entries(this.defaults()).filter(([k, v]) => cols.has(k) && v !== ''));
     if (this.scheduleMode() === 'at' && this.scheduleAt()) {
       const d = new Date(this.scheduleAt());
       if (!Number.isNaN(d.getTime())) body.scheduledAt = d.toISOString();
+    } else if (this.scheduleMode() === 'now' && this.serverHasSchedule) {
+      body.scheduledAt = null; // explicit null clears the saved schedule (absent would mean "unchanged")
     }
     return body;
   }
 
-  /** PATCH /draft with the current fields (serialised; skipped when nothing changed since the last save). */
+  /** PATCH /draft with the current fields (serialised; skipped when nothing changed, and never while locked). */
   saveDraft(): Promise<void> {
     const run = async () => {
       const id = this.campaignId();
-      if (!id) return;
+      if (!id || this.locked()) return;
       const body = this.draftBody();
       const fp = JSON.stringify(body);
       if (fp === this.lastSaved) return;
-      const r = await firstValueFrom(this.api.patchDraft(id, body, this.keys.patch.for(fp)));
+      let r: { revisionId: string; approvalInvalidated: boolean };
+      try {
+        r = await firstValueFrom(this.api.patchDraft(id, body, this.keys.patch.for(fp)));
+      } catch (e) {
+        this.keys.patch.fail(e);
+        throw e;
+      }
       this.keys.patch.settle();
       this.lastSaved = fp;
       this.savedAt.set(new Date());
-      // PATCH treats a missing scheduledAt as "unchanged", so a saved schedule cannot be cleared from the client.
-      if (body.scheduledAt) this.scheduleLocked.set(true);
+      if (body.scheduledAt !== undefined) this.serverHasSchedule = body.scheduledAt !== null;
       if (r.approvalInvalidated) this.approvalInvalidated.set(true);
+      this.serverState.set('DRAFT');
       this.submittedHash.set(null);
       this.persist();
     };
@@ -287,30 +351,44 @@ export class WizardStore {
     return p;
   }
 
-  /** Save, then ask the server for the preflight (segments, cost, findings). Needs audience, channel and content. */
+  /**
+   * Save, then ask the server for the preflight (segments, cost, findings). Needs audience, channel and content.
+   * Requests are numbered: a response for an older text that arrives after a newer one is dropped.
+   */
   async refreshPreflight(): Promise<void> {
     const id = this.campaignId();
+    if (this.locked()) return;
     if (!id || !this.summary() || !this.content().trim()) {
       this.preflight.set(null);
       return;
     }
+    const seq = ++this.preflightSeq;
     this.preflightPending.set(true);
     try {
       await this.saveDraft();
-      const r = await firstValueFrom(this.api.preflight(id, this.keys.preflight.for(this.lastSaved ?? '')));
+      if (seq !== this.preflightSeq) return;
+      let r: PreflightReport;
+      try {
+        r = await firstValueFrom(this.api.preflight(id, this.keys.preflight.for(`${seq}|${this.lastSaved ?? ''}`)));
+      } catch (e) {
+        this.keys.preflight.fail(e);
+        throw e;
+      }
       this.keys.preflight.settle();
+      if (seq !== this.preflightSeq) return;
       this.preflight.set(r);
       this.error.set(null);
     } catch (e) {
+      if (seq !== this.preflightSeq) return;
       const err = apiError(e);
       if (err.code === 'DRAFT_INCOMPLETE') this.preflight.set(null);
       else this.error.set(err);
     } finally {
-      this.preflightPending.set(false);
+      if (seq === this.preflightSeq) this.preflightPending.set(false);
     }
   }
 
-  /** Step change = autosave (spec §4). The documents step is not used for SMS and is passed over. */
+  /** Step change = autosave (spec §4), except while locked (view only). The documents step is not used for SMS and is passed over. */
   async goTo(target: number): Promise<void> {
     if (target < 0 || target >= STEPS.length) return;
     if (target === DOCUMENTS_STEP) target = this.step() < DOCUMENTS_STEP ? PREFLIGHT_STEP : DOCUMENTS_STEP - 1;
@@ -331,7 +409,7 @@ export class WizardStore {
 
   async submit(): Promise<boolean> {
     const id = this.campaignId();
-    if (!id) return false;
+    if (!id || this.locked()) return false;
     return this.act(async () => {
       await this.saveDraft();
       const note = this.note().trim() || null;
@@ -339,17 +417,15 @@ export class WizardStore {
         const r = await firstValueFrom(this.api.submit(id, note, this.keys.submit.for(JSON.stringify([this.lastSaved, note]))));
         this.keys.submit.settle();
         this.submittedHash.set(r.packageHash);
-        try {
-          sessionStorage.removeItem(snapshotKey(id));
-        } catch {
-          /* ignore */
-        }
+        this.serverState.set('SUBMITTED');
+        this.locked.set(true);
+        this.persist();
         return r;
       } catch (e) {
+        this.keys.submit.fail(e);
         const err = apiError(e);
         const findings = (err.body as { findings?: Finding[] } | null)?.findings;
         if (err.code === 'PREFLIGHT_BLOCKED' && findings) {
-          this.keys.submit.settle();
           this.preflight.update((p) => (p ? { ...p, findings } : p));
           this.step.set(PREFLIGHT_STEP);
         }

@@ -137,3 +137,8 @@
   margin: 0;
   font-weight: 700;
 }
+
+/* Programmatic focus targets (step headings): focus is moved there for screen readers; no visible ring on a non-interactive heading. */
+[tabindex='-1']:focus {
+  outline: none;
+}

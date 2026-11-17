@@ -1,6 +1,6 @@
-import { ChangeDetectionStrategy, Component, computed, effect, inject, input, untracked } from '@angular/core';
+import { afterNextRender, ChangeDetectionStrategy, Component, computed, effect, ElementRef, inject, Injector, input, signal, untracked } from '@angular/core';
 import { Location } from '@angular/common';
-import { RouterLink } from '@angular/router';
+import { Router, RouterLink } from '@angular/router';
 import { formatNumber, formatTime } from '../../../core/format';
 import { BannerComponent } from '../../../ui/banner/banner.component';
 import { ButtonComponent } from '../../../ui/button/button.component';
@@ -39,8 +39,16 @@ export class WizardComponent {
 
   protected readonly s = inject(WizardStore);
   private readonly location = inject(Location);
+  private readonly router = inject(Router);
   protected readonly steps = STEPS;
   protected readonly DOCUMENTS_STEP = DOCUMENTS_STEP;
+  private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
+  private readonly injector = inject(Injector);
+
+  /** Polite announcement of the current step after a step change (screen readers). */
+  protected readonly stepAnnouncement = signal('');
+  /** Second click needed to edit a submitted campaign. */
+  protected readonly confirmEdit = signal(false);
 
   protected readonly savedText = computed(() => {
     const t = this.s.savedAt();
@@ -72,6 +80,7 @@ export class WizardComponent {
         };
       }
       default: {
+        if (s.locked()) return { label: 'הוגש לאישור', disabled: true, reason: 'המשלוח כבר הוגש לאישור' };
         const n = s.preflight()?.eligibleRecipients;
         const ready = n !== undefined && !s.busy() && !s.submittedHash() && s.blockers().length === 0;
         return {
@@ -88,6 +97,38 @@ export class WizardComponent {
       const id = this.id();
       if (id) untracked(() => this.s.resume(id));
     });
+
+    // On a step change (not on first render): announce it and move focus to the new step heading, so keyboard and
+    // screen-reader users land at the top of the new step instead of on <body> when the old content is destroyed.
+    let previous: number | null = null;
+    effect(() => {
+      const step = this.s.step();
+      const restored = untracked(() => this.s.restoredStep());
+      if (previous === null || previous === step || restored === step) {
+        if (restored === step) untracked(() => this.s.restoredStep.set(null));
+        previous = step;
+        return;
+      }
+      previous = step;
+      untracked(() => {
+        this.stepAnnouncement.set(`שלב ${step + 1} מתוך ${STEPS.length}: ${STEPS[step].label}`);
+        afterNextRender(() => this.host.nativeElement.querySelector<HTMLElement>('#wizard-step-heading')?.focus(), { injector: this.injector });
+      });
+    });
+  }
+
+  protected openTracking(): void {
+    const id = this.s.campaignId();
+    if (id) void this.router.navigate(['/campaigns', id, 'tracking']);
+  }
+
+  protected startEdit(): void {
+    if (!this.confirmEdit()) {
+      this.confirmEdit.set(true);
+      return;
+    }
+    this.confirmEdit.set(false);
+    this.s.unlockForEdit();
   }
 
   protected canVisit(i: number): boolean {

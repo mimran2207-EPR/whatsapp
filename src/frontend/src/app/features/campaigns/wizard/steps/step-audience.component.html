@@ -1,5 +1,5 @@
 <div class="stack">
-  <h2 class="t-h2-20 section-title">למי שולחים?</h2>
+  <h2 id="wizard-step-heading" tabindex="-1" class="t-h2-20 section-title">למי שולחים?</h2>
 
   <div class="grid2">
     <rc-text-field label="שם המשלוח" [helper]="locked() ? 'המשלוח נוצר; השם נשמר' : 'לדוגמה: הזנה — נובמבר'">
@@ -30,10 +30,12 @@
         </ul>
       }
       <div class="result__links">
-        @if (imp.invalidCount > 0 && !s.importErrors()) {
+        @if (imp.invalidCount > 0 && imp.importRunId && !s.importErrors()) {
           <button type="button" class="link-btn" (click)="s.loadImportErrors()">רשימת השגיאות ({{ fmt(imp.invalidCount) }})</button>
         }
-        <button type="button" class="link-btn" (click)="replaceFile()">החלפת קובץ</button>
+        @if (!s.locked()) {
+          <button type="button" class="link-btn" (click)="replaceFile()">החלפת קובץ</button>
+        }
       </div>
       @if (s.importErrors(); as errs) {
         <table class="errors">

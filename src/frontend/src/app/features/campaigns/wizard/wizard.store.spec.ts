@@ -106,6 +106,141 @@ describe('WizardStore', () => {
     expect(s.stepStates()[3]).toBe('skipped');
   });
 
+  it('uses a new PATCH key after a definite error, and the same key only after a network failure', async () => {
+    await imported();
+    s.content.set('שלום');
+    const p1 = s.saveDraft();
+    await tick();
+    const r1 = ctrl.expectOne('/v1/campaigns/c1/draft');
+    const k1 = r1.request.headers.get('Idempotency-Key');
+    r1.error(new ProgressEvent('error'), { status: 0 });
+    await expect(p1).rejects.toBeTruthy();
+
+    const p2 = s.saveDraft();
+    await tick();
+    const r2 = ctrl.expectOne('/v1/campaigns/c1/draft');
+    expect(r2.request.headers.get('Idempotency-Key')).toBe(k1);
+    r2.flush({ code: 'VALIDATION_FAILED' }, { status: 400, statusText: 'x' });
+    await expect(p2).rejects.toBeTruthy();
+
+    const p3 = s.saveDraft();
+    await tick();
+    const r3 = ctrl.expectOne('/v1/campaigns/c1/draft');
+    expect(r3.request.headers.get('Idempotency-Key')).not.toBe(k1);
+    r3.flush({ revisionId: 'rev1', approvalInvalidated: false });
+    await p3;
+  });
+
+  it('uses a new submit key after a definite refusal', async () => {
+    await imported();
+    s.content.set('שלום');
+    s.preflight.set(preflight);
+    const a = s.submit();
+    await tick();
+    ctrl.expectOne('/v1/campaigns/c1/draft').flush({ revisionId: 'rev1', approvalInvalidated: false });
+    await tick();
+    const r1 = ctrl.expectOne('/v1/campaigns/c1/submit');
+    const k1 = r1.request.headers.get('Idempotency-Key');
+    r1.flush({ code: 'INVALID_STATE' }, { status: 409, statusText: 'x' });
+    await a;
+    const b = s.submit();
+    await tick();
+    const r2 = ctrl.expectOne('/v1/campaigns/c1/submit');
+    expect(r2.request.headers.get('Idempotency-Key')).not.toBe(k1);
+    r2.flush({ packageHash: 'h' });
+    await b;
+  });
+
+  it('ignores a preflight response that arrives after a newer one', async () => {
+    await imported();
+    s.content.set('א');
+    const first = s.refreshPreflight();
+    await tick();
+    ctrl.expectOne('/v1/campaigns/c1/draft').flush({ revisionId: 'rev1', approvalInvalidated: false });
+    await tick();
+    const old = ctrl.expectOne('/v1/campaigns/c1/preflight');
+
+    s.content.set('אב');
+    const second = s.refreshPreflight();
+    await tick();
+    ctrl.expectOne('/v1/campaigns/c1/draft').flush({ revisionId: 'rev1', approvalInvalidated: false });
+    await tick();
+    const fresh = ctrl.expectOne('/v1/campaigns/c1/preflight');
+    fresh.flush({ ...preflight, segmentsPerMessage: 2 });
+    await second;
+    old.flush({ ...preflight, segmentsPerMessage: 1 }); // stale: for the older text
+    await first;
+    expect(s.preflight()?.segmentsPerMessage).toBe(2);
+    expect(s.preflightPending()).toBe(false);
+  });
+
+  it('is read-only after submit: no PATCH or preflight until editing is confirmed', async () => {
+    await imported();
+    s.content.set('שלום');
+    s.preflight.set(preflight);
+    const done = s.submit();
+    await tick();
+    ctrl.expectOne('/v1/campaigns/c1/draft').flush({ revisionId: 'rev1', approvalInvalidated: false });
+    await tick();
+    ctrl.expectOne('/v1/campaigns/c1/submit').flush({ packageHash: 'h' });
+    await done;
+    expect(s.locked()).toBe(true);
+
+    s.content.set('שינוי');
+    await s.saveDraft();
+    await s.refreshPreflight();
+    await s.goTo(2);
+    ctrl.expectNone('/v1/campaigns/c1/draft');
+    ctrl.expectNone('/v1/campaigns/c1/preflight');
+    expect(s.step()).toBe(2); // viewing is allowed
+
+    s.unlockForEdit();
+    expect(s.locked()).toBe(false);
+    const save = s.saveDraft();
+    await tick();
+    ctrl.expectOne('/v1/campaigns/c1/draft').flush({ revisionId: 'rev2', approvalInvalidated: true });
+    await save;
+    expect(s.approvalInvalidated()).toBe(true);
+  });
+
+  it('resumes a draft from the server (another browser) and locks a submitted one', async () => {
+    s.resume('c9');
+    ctrl.expectOne('/v1/campaigns/c9').flush({
+      campaignId: 'c9',
+      name: 'משלוח קיים',
+      purpose: 'OPERATIONAL',
+      state: 'SUBMITTED',
+      createdBy: 'dana',
+      revisionId: 'r3',
+      revisionNo: 3,
+      channel: 'SMS',
+      contentText: 'שלום {שם הורה}',
+      fieldDefaults: { 'שם ילד': 'ילדכם' },
+      scheduledAt: '2026-11-18T09:30:00Z',
+      audience: {
+        audienceVersionId: 'v9',
+        importRunId: 'r9',
+        fileName: 'x.csv',
+        rowCount: 4,
+        validCount: 3,
+        invalidCount: 1,
+        eligibleRecipients: 3,
+        fieldNames: ['גן', 'שם הורה', 'שם ילד'],
+      },
+      preview: { recipientName: 'דנה כ.', recipientPhone: '052-***-**67', text: 'שלום דנה כ.', missingFields: [] },
+    });
+    await tick();
+    expect(s.name()).toBe('משלוח קיים');
+    expect(s.content()).toBe('שלום {שם הורה}');
+    expect(s.defaults()).toEqual({ 'שם ילד': 'ילדכם' });
+    expect(s.summary()?.audienceVersionId).toBe('v9');
+    expect(s.fieldColumns()).toEqual(['גן', 'שם הורה', 'שם ילד']);
+    expect(s.scheduleMode()).toBe('at');
+    expect(s.serverPreview()?.text).toBe('שלום דנה כ.');
+    expect(s.locked()).toBe(true);
+    expect(s.maxStep()).toBe(5);
+  });
+
   it('goes back to the preflight step when submit is blocked', async () => {
     await imported();
     s.content.set('שלום {שם ילד}');

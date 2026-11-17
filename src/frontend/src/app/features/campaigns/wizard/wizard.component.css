@@ -58,6 +58,17 @@
   gap: var(--space-24);
 }
 
+.locked {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-12);
+}
+
+.locked rc-banner {
+  flex: 1 1 320px;
+}
+
 .layout__error:empty {
   display: none;
 }

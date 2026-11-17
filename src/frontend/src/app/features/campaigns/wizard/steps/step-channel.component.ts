@@ -19,7 +19,7 @@ interface ChannelCard {
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div class="stack">
-      <h2 class="t-h2-20 section-title">איך שולחים?</h2>
+      <h2 id="wizard-step-heading" tabindex="-1" class="t-h2-20 section-title">איך שולחים?</h2>
       <div class="cards" role="radiogroup" aria-label="ערוץ שליחה">
         @for (c of cards; track c.key) {
           <div

@@ -1,4 +1,4 @@
-import { HttpClient, HttpContext, provideHttpClient, withInterceptors } from '@angular/common/http';
+import { HttpClient, HttpContext, HttpErrorResponse, provideHttpClient, withInterceptors } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
 import { firstValueFrom, retry } from 'rxjs';
@@ -78,6 +78,20 @@ describe('ActionKey', () => {
     const k1 = a.for('body-1');
     expect(a.for('body-1')).toBe(k1);
     a.settle();
+    expect(a.for('body-1')).not.toBe(k1);
+  });
+
+  it('keeps the key after a failure with no response (network error, status 0)', () => {
+    const a = new ActionKey();
+    const k1 = a.for('body-1');
+    a.fail(new HttpErrorResponse({ status: 0 }));
+    expect(a.for('body-1')).toBe(k1);
+  });
+
+  it.each([400, 409, 422, 500, 503])('ends the action after a definite %s response: the next attempt gets a new key', (status) => {
+    const a = new ActionKey();
+    const k1 = a.for('body-1');
+    a.fail(new HttpErrorResponse({ status, error: { code: 'X' } }));
     expect(a.for('body-1')).not.toBe(k1);
   });
 

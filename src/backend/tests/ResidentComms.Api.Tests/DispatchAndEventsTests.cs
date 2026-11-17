@@ -256,4 +256,53 @@ public class DispatchAndEventsTests(ApiFactory f) : IClassFixture<ApiFactory>
         Assert.Equal(expected, await f.Db.ScalarAsync<int>($"SELECT COUNT(*) FROM Message WHERE campaign_id = '{camp}' AND delivery_state = 'DELIVERED'"));
         Assert.Equal(expected * 2, await f.Db.ScalarAsync<int>($"SELECT COUNT(*) FROM MessageEvent e JOIN Message m ON m.message_id = e.message_id WHERE m.campaign_id = '{camp}'")); // sent + delivered, duplicates deduplicated
     }
+
+    private sealed class FlakyPoster(int failures) : IProviderEventPoster
+    {
+        public int Calls;
+        public readonly List<string> Delivered = [];
+        public Task PostAsync(string body, string signatureHex, CancellationToken ct)
+        {
+            if (Interlocked.Increment(ref Calls) <= failures) throw new HttpRequestException("422 UNATTRIBUTABLE (event raced the provider id commit)");
+            lock (Delivered) Delivered.Add(body);
+            return Task.CompletedTask;
+        }
+    }
+
+    /// <summary>
+    /// Root cause of lost delivery facts: an event that reaches the API before the dispatcher has committed provider_message_id
+    /// is refused (422, no tenant to attribute it to) and the mock provider never re-sent it. A real provider retries webhooks.
+    /// </summary>
+    [Fact] public async Task Mock_provider_retries_an_event_the_api_refused()
+    {
+        var poster = new FlakyPoster(failures: 2);
+        var o = Options(seed: 3);
+        o.WebhookRetryDelaysMs = [20, 20, 20];
+        var adapter = new MockSmsAdapter(o, poster);
+        var outcome = await adapter.SendAsync(new SmsSendRequest(Guid.NewGuid(), "+972521234567", "x", "k"), CancellationToken.None);
+        Assert.Equal(SendOutcome.Accepted, outcome.Kind);
+
+        for (var i = 0; i < 100 && poster.Delivered.Count < 2; i++) await Task.Delay(50);
+        Assert.Equal(2, poster.Delivered.Count); // sent + delivered both landed despite two refusals
+        Assert.Contains(poster.Delivered, b => b.Contains("\"delivered\""));
+    }
+
+    /// <summary>The terminal event is posted for every accepted message whenever DeliverRate + FailRate = 1 (no "stays sent" bucket).</summary>
+    [Fact] public async Task Released_campaign_reaches_a_terminal_delivery_state_through_the_api_with_racing_events()
+    {
+        var camp = await ReleasedCampaign("race");
+        var options = Options(seed: 11);
+        options.MaxEventDelaySeconds = 0; // events race the dispatcher commit; retries must recover them
+        options.WebhookRetryDelaysMs = [200, 400, 800, 1600];
+        var dispatcher = Dispatcher(options, new HttpProviderEventPoster(f.CreateClient()));
+        await dispatcher.RunOnceAsync(CancellationToken.None);
+
+        var expected = await f.Db.ScalarAsync<int>($"SELECT COUNT(*) FROM Message WHERE campaign_id = '{camp}'");
+        for (var i = 0; i < 100; i++)
+        {
+            if (await f.Db.ScalarAsync<int>($"SELECT COUNT(*) FROM Message WHERE campaign_id = '{camp}' AND delivery_state = 'DELIVERED'") == expected) break;
+            await Task.Delay(100);
+        }
+        Assert.Equal(expected, await f.Db.ScalarAsync<int>($"SELECT COUNT(*) FROM Message WHERE campaign_id = '{camp}' AND delivery_state = 'DELIVERED'"));
+    }
 }

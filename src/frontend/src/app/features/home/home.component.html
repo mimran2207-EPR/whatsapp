@@ -54,7 +54,7 @@
           @for (c of recent(); track c.campaignId) {
             <li class="list__item">
               @if (campaignLink(c); as link) {
-                <a class="list__text link-btn" [routerLink]="link">{{ c.name }}</a>
+                <a class="list__text link-btn" [routerLink]="link" [queryParams]="linkQuery(c)">{{ c.name }}</a>
               } @else {
                 <span class="list__text">{{ c.name }}</span>
               }

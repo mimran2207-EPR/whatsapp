@@ -5,7 +5,8 @@ using ResidentComms.Infrastructure.Sql;
 
 namespace ResidentComms.Infrastructure.Repositories;
 
-public sealed record DraftPatch(Guid? AudienceVersionId, string? Channel, string? ContentText, IReadOnlyDictionary<string, string>? FieldDefaults, DateTimeOffset? ScheduledAt);
+public sealed record DraftPatch(Guid? AudienceVersionId, string? Channel, string? ContentText, IReadOnlyDictionary<string, string>? FieldDefaults, DateTimeOffset? ScheduledAt,
+    bool ClearSchedule = false); // ClearSchedule: the request carried an explicit "scheduledAt": null
 public sealed record PatchOutcome(Guid RevisionId, bool ApprovalInvalidated);
 public sealed record PreflightReport(IReadOnlyList<FindingDto> Findings, int EligibleRecipients, int SegmentsPerMessage, string Encoding, decimal CostMin, decimal CostMax);
 public sealed record CampaignListItem(Guid CampaignId, string Name, string Purpose, string State, string? Channel, int Recipients, int Accepted, int Delivered, int Unknown, int Failed);
@@ -56,7 +57,7 @@ public sealed class CampaignRepository(SqlConnectionFactory db, TimeProvider clo
         var channel = p.Channel ?? rev.Channel;
         var content = p.ContentText ?? rev.ContentText;
         var defaultsJson = p.FieldDefaults is null ? rev.FieldDefaultsJson : CampaignQueries.DefaultsJson(p.FieldDefaults);
-        var scheduled = p.ScheduledAt is { } s ? TruncateMs(s.UtcDateTime) : rev.ScheduledAt;
+        var scheduled = p.ScheduledAt is { } s ? TruncateMs(s.UtcDateTime) : p.ClearSchedule ? null : rev.ScheduledAt;
 
         var changed = audience != rev.AudienceVersionId || channel != rev.Channel || content != rev.ContentText
             || (defaultsJson ?? "{}") != (rev.FieldDefaultsJson ?? "{}") || scheduled != rev.ScheduledAt;

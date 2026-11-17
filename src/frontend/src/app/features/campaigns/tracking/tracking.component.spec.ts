@@ -68,6 +68,32 @@ describe('TrackingComponent', () => {
     f.destroy();
   });
 
+  it('stops polling on 404 and shows a banner', async () => {
+    const f = TestBed.createComponent(TrackingComponent);
+    f.componentRef.setInput('id', 'c1');
+    f.detectChanges();
+    await vi.advanceTimersByTimeAsync(0);
+    ctrl.expectOne('/v1/campaigns/c1/tracking').flush({ code: 'NOT_FOUND' }, { status: 404, statusText: 'x' });
+    await vi.advanceTimersByTimeAsync(0);
+    f.detectChanges();
+    expect(f.nativeElement.querySelector('rc-banner')!.textContent).toContain('המשלוח לא נמצא');
+    await vi.advanceTimersByTimeAsync(20000);
+    ctrl.expectNone('/v1/campaigns/c1/tracking');
+    f.destroy();
+  });
+
+  it('keeps polling after a transient error', async () => {
+    const f = TestBed.createComponent(TrackingComponent);
+    f.componentRef.setInput('id', 'c1');
+    f.detectChanges();
+    await vi.advanceTimersByTimeAsync(0);
+    ctrl.expectOne('/v1/campaigns/c1/tracking').flush({}, { status: 503, statusText: 'x' });
+    await vi.advanceTimersByTimeAsync(5000);
+    ctrl.expectOne('/v1/campaigns/c1/tracking').flush(view);
+    await vi.advanceTimersByTimeAsync(0);
+    f.destroy();
+  });
+
   it('announces a polite summary once, not on every poll', async () => {
     const f = await render();
     const live = () => f.nativeElement.querySelector('[aria-live="polite"]')!.textContent!.trim();
