@@ -1,0 +1,9 @@
+{
+  // Static placeholder until the Angular app exists (phase 1).
+  // Replace "directory" with the Angular build output (e.g. ./src/frontend/dist/browser).
+  "name": "whatsapp",
+  "compatibility_date": "2026-11-01",
+  "assets": {
+    "directory": "./public"
+  }
+}

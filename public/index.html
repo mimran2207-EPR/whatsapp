@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>מערכת תקשורת לתושבים — בבנייה</title>
+  <meta name="robots" content="noindex">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --brand: #07BED1;
+      --on-action: #002538;
+      --brand-dark: #13737D;
+      --text: #002538;
+      --text-secondary: #686868;
+      --text-brand: #00707C;
+      --surface: #FFFFFF;
+      --border: #E1EFF6;
+      --subtle: #EFF6F9;
+      --page-top: #F7FAFC;
+      --page-bottom: #F2F4FA;
+      --wa-bg: #E4FAF5; --wa-fg: #087A5B;
+      --sms-bg: #EEEBFE; --sms-fg: #5B3BD6;
+      --email-bg: #FEEDE1; --email-fg: #A84B00;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Rubik", system-ui, sans-serif;
+      color: var(--text);
+      background: linear-gradient(180deg, var(--page-top), var(--page-bottom));
+      min-height: 100vh;
+    }
+    main { max-width: 1040px; margin: 0 auto; padding: 32px 16px 48px; display: grid; gap: 24px; }
+    .banner {
+      border-radius: 20px;
+      padding: 36px 40px;
+      color: #FFFFFF;
+      background: linear-gradient(270deg, var(--brand-dark), #0FA3B1);
+      box-shadow: 0 8px 30px rgba(11, 131, 142, .05);
+    }
+    .banner h1 { margin: 0 0 8px; font-size: 40px; line-height: 48px; font-weight: 700; }
+    .banner p { margin: 0; font-size: 24px; line-height: 32px; max-width: 640px; }
+    .pill {
+      display: inline-block; margin-bottom: 16px; padding: 4px 12px; border-radius: 999px;
+      background: var(--brand); color: var(--on-action); font-weight: 700; font-size: 14px;
+    }
+    .grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+    .card {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 24px;
+      padding: 24px; box-shadow: 0 8px 30px rgba(11, 131, 142, .05);
+    }
+    .card h2 { margin: 0 0 8px; font-size: 18px; line-height: 24px; }
+    .card p { margin: 0; color: var(--text-secondary); font-size: 14px; line-height: 20px; }
+    .status { display: inline-block; margin-top: 12px; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 500; }
+    .done { background: #E7F9ED; color: #0B7A43; }
+    .next { background: #EAF1FF; color: #1E55C8; }
+    .chips { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+    .chip { padding: 6px 12px; border-radius: 999px; font-weight: 700; font-size: 14px; }
+    .wa { background: var(--wa-bg); color: var(--wa-fg); }
+    .sms { background: var(--sms-bg); color: var(--sms-fg); }
+    .email { background: var(--email-bg); color: var(--email-fg); }
+    a { color: var(--text-brand); font-weight: 700; }
+    footer { color: var(--text-secondary); font-size: 12px; text-align: center; }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="banner">
+      <span class="pill">בבנייה</span>
+      <h1>מערכת תקשורת לתושבים</h1>
+      <p>שליחה, בקרה ותחקור של הודעות לתושבים ב-WhatsApp, SMS ו-Email — כלי תפעול לעובדי הרשות.</p>
+    </section>
+
+    <section class="grid" aria-label="מצב הפרויקט">
+      <article class="card">
+        <h2>חוזי נתונים</h2>
+        <p>צירי סטטוס, סכימת SQL Server עם בידוד רשויות, קטלוג שדות ומילון סטטוסים.</p>
+        <span class="status done">הושלם · שלב 0</span>
+      </article>
+      <article class="card">
+        <h2>עיצוב</h2>
+        <p>Blueprint מלא בפיגמה: 15 עמודים, 32 מסכים, שפת Muni מותאמת לנגישות AA.</p>
+        <span class="status done">הושלם · ממתין לאישור</span>
+      </article>
+      <article class="card">
+        <h2>אפליקציה</h2>
+        <p>מסכי Angular ו-API ב-C#. הדף הזה יוחלף באפליקציה עצמה.</p>
+        <span class="status next">הבא · שלב 1</span>
+      </article>
+    </section>
+
+    <section class="card" aria-label="ערוצים">
+      <h2>ערוצים</h2>
+      <p>כל משלוח עובר אשף: למי · איך · מה · מסמכים · בדיקה · אישור · מעקב.</p>
+      <div class="chips">
+        <span class="chip wa">WhatsApp</span>
+        <span class="chip sms">SMS</span>
+        <span class="chip email">Email</span>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>קוד ותיעוד</h2>
+      <p>הקוד, האפיון והחלטות הארכיטקטורה נמצאים ב-<a href="https://github.com/mimran2207-EPR/whatsapp">GitHub</a>.</p>
+    </section>
+
+    <footer>נתונים סינתטיים בלבד · אין בדף זה מידע על תושבים</footer>
+  </main>
+</body>
+</html>
