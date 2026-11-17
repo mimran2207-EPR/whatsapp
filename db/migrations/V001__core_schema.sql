@@ -67,6 +67,7 @@ CREATE TABLE CampaignRevision (
     created_at DATETIME2(3) NOT NULL DEFAULT SYSUTCDATETIME(),
     CONSTRAINT UQ_CampaignRevision UNIQUE (tenant_id, campaign_id, revision_no),
     CONSTRAINT UQ_CampaignRevision_Tenant UNIQUE (tenant_id, campaign_revision_id),
+    CONSTRAINT UQ_CampaignRevision_Campaign UNIQUE (tenant_id, campaign_id, campaign_revision_id),   -- target of Message: revision must belong to the message's campaign
     CONSTRAINT FK_CampaignRevision_Campaign FOREIGN KEY (tenant_id, campaign_id) REFERENCES Campaign(tenant_id, campaign_id),
     CONSTRAINT FK_CampaignRevision_Snapshot FOREIGN KEY (tenant_id, audience_snapshot_id) REFERENCES AudienceSnapshot(tenant_id, audience_snapshot_id)
 );
@@ -97,6 +98,7 @@ CREATE TABLE CampaignRecipient (
     primary_exclusion_reason VARCHAR(50) NULL,
     CONSTRAINT UQ_CampaignRecipient UNIQUE (tenant_id, audience_snapshot_id, approved_identity_key),
     CONSTRAINT UQ_CampaignRecipient_Tenant UNIQUE (tenant_id, campaign_recipient_id),
+    CONSTRAINT UQ_CampaignRecipient_Campaign UNIQUE (tenant_id, campaign_id, campaign_recipient_id),   -- target of Message/Document: recipient must belong to the row's campaign
     CONSTRAINT FK_CampaignRecipient_Campaign FOREIGN KEY (tenant_id, campaign_id) REFERENCES Campaign(tenant_id, campaign_id),
     CONSTRAINT FK_CampaignRecipient_Snapshot FOREIGN KEY (tenant_id, audience_snapshot_id) REFERENCES AudienceSnapshot(tenant_id, audience_snapshot_id)
 );
@@ -125,6 +127,9 @@ CREATE TABLE Message (
     handoff_state VARCHAR(20) NOT NULL CHECK (handoff_state IN ('NOT_HANDED_OFF','HANDED_OFF','ACCEPTED','REJECTED','UNKNOWN')),
     delivery_state VARCHAR(20) NOT NULL CHECK (delivery_state IN ('NOT_REPORTED','SENT_PER_PROVIDER','DELIVERED','FAILED','UNKNOWN')),
     data_quality VARCHAR(15) NOT NULL CHECK (data_quality IN ('CURRENT','PARTIAL','LATE','CONFLICTING','UNSUPPORTED')),
+    -- Set when DeliveryMerge reports Conflict; cleared only by explicit reconciliation.
+    -- Independent of data_quality, which may later become LATE/PARTIAL while the conflict still holds.
+    delivery_conflict BIT NOT NULL DEFAULT 0,
     read_at DATETIME2(3) NULL, opened_at DATETIME2(3) NULL, clicked_at DATETIME2(3) NULL,
     replied_at DATETIME2(3) NULL, opted_out_at DATETIME2(3) NULL,
     status_mapping_version VARCHAR(50) NULL,
@@ -132,9 +137,10 @@ CREATE TABLE Message (
     CONSTRAINT UQ_Message_Logical UNIQUE (tenant_id, campaign_id, campaign_revision_id, campaign_recipient_id, channel, channel_sequence_no),
     CONSTRAINT UQ_Message_Idempotency UNIQUE (tenant_id, idempotency_key),
     CONSTRAINT UQ_Message_Tenant UNIQUE (tenant_id, message_id),
+    CONSTRAINT UQ_Message_Recipient UNIQUE (tenant_id, campaign_recipient_id, message_id),   -- target of MessageDocumentLink
     CONSTRAINT FK_Message_Campaign FOREIGN KEY (tenant_id, campaign_id) REFERENCES Campaign(tenant_id, campaign_id),
-    CONSTRAINT FK_Message_Revision FOREIGN KEY (tenant_id, campaign_revision_id) REFERENCES CampaignRevision(tenant_id, campaign_revision_id),
-    CONSTRAINT FK_Message_Recipient FOREIGN KEY (tenant_id, campaign_recipient_id) REFERENCES CampaignRecipient(tenant_id, campaign_recipient_id),
+    CONSTRAINT FK_Message_Revision FOREIGN KEY (tenant_id, campaign_id, campaign_revision_id) REFERENCES CampaignRevision(tenant_id, campaign_id, campaign_revision_id),
+    CONSTRAINT FK_Message_Recipient FOREIGN KEY (tenant_id, campaign_id, campaign_recipient_id) REFERENCES CampaignRecipient(tenant_id, campaign_id, campaign_recipient_id),
     CONSTRAINT FK_Message_Parent FOREIGN KEY (tenant_id, parent_message_id) REFERENCES Message(tenant_id, message_id)
 );
 
@@ -204,20 +210,23 @@ CREATE TABLE Document (
     generated_at DATETIME2(3) NULL,
     CONSTRAINT UQ_Document_Match UNIQUE (tenant_id, campaign_id, campaign_recipient_id, document_key),
     CONSTRAINT UQ_Document_Tenant UNIQUE (tenant_id, document_id),
+    CONSTRAINT UQ_Document_Recipient UNIQUE (tenant_id, campaign_recipient_id, document_id),   -- target of MessageDocumentLink
     CONSTRAINT FK_Document_Campaign FOREIGN KEY (tenant_id, campaign_id) REFERENCES Campaign(tenant_id, campaign_id),
-    CONSTRAINT FK_Document_Recipient FOREIGN KEY (tenant_id, campaign_recipient_id) REFERENCES CampaignRecipient(tenant_id, campaign_recipient_id)
+    CONSTRAINT FK_Document_Recipient FOREIGN KEY (tenant_id, campaign_id, campaign_recipient_id) REFERENCES CampaignRecipient(tenant_id, campaign_id, campaign_recipient_id)
 );
 
+-- A document can only be linked to a message of the same recipient (composite FKs through campaign_recipient_id).
 CREATE TABLE MessageDocumentLink (
     message_document_link_id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY,
     tenant_id UNIQUEIDENTIFIER NOT NULL REFERENCES Tenant(tenant_id),
+    campaign_recipient_id UNIQUEIDENTIFIER NOT NULL,
     message_id UNIQUEIDENTIFIER NOT NULL,
     document_id UNIQUEIDENTIFIER NOT NULL,
     delivery_mode VARCHAR(20) NOT NULL CHECK (delivery_mode IN ('ATTACHMENT','SECURE_LINK')),
     attachment_or_link_state VARCHAR(20) NOT NULL,
     link_expires_at DATETIME2(3) NULL,
     CONSTRAINT UQ_MessageDocumentLink UNIQUE (message_id, document_id),
-    CONSTRAINT FK_Link_Message FOREIGN KEY (tenant_id, message_id) REFERENCES Message(tenant_id, message_id),
-    CONSTRAINT FK_Link_Document FOREIGN KEY (tenant_id, document_id) REFERENCES Document(tenant_id, document_id)
+    CONSTRAINT FK_Link_Message FOREIGN KEY (tenant_id, campaign_recipient_id, message_id) REFERENCES Message(tenant_id, campaign_recipient_id, message_id),
+    CONSTRAINT FK_Link_Document FOREIGN KEY (tenant_id, campaign_recipient_id, document_id) REFERENCES Document(tenant_id, campaign_recipient_id, document_id)
 );
 GO
