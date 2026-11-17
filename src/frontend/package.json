@@ -11,7 +11,8 @@
     "watch": "ng build --watch --configuration development",
     "test:tokens": "node --test scripts/*.test.mjs",
     "test:ui": "npm run tokens && ng test --watch=false",
-    "test": "npm run test:tokens && npm run test:ui"
+    "test": "npm run test:tokens && npm run test:ui",
+    "e2e": "playwright test"
   },
   "private": true,
   "packageManager": "npm@11.9.0",
@@ -29,6 +30,7 @@
     "@angular/build": "^21.2.30",
     "@angular/cli": "^21.2.30",
     "@angular/compiler-cli": "^21.2.0",
+    "@playwright/test": "^1.65.1",
     "jsdom": "^28.0.0",
     "prettier": "^3.8.1",
     "typescript": "~5.9.2",

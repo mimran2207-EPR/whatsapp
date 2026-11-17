@@ -40,3 +40,9 @@ Thumbs.db
 
 # Editor config is per-developer
 .vscode/
+
+# Playwright
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
