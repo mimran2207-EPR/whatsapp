@@ -1,0 +1,54 @@
+<div class="shell">
+  <aside class="sidebar" aria-label="ניווט ראשי">
+    <div class="brand">
+      <span class="brand__title">תקשורת</span>
+      <span class="brand__subtitle">מערכת תקשורת לתושבים</span>
+    </div>
+
+    <a class="new-send" routerLink="/campaigns/new">
+      <rc-icon name="plus" [size]="18" />
+      <span class="label">משלוח חדש</span>
+    </a>
+
+    <nav class="nav">
+      @for (item of nav; track item.key) {
+        <a
+          class="nav__item"
+          [class.nav__item--active]="item.key === activeNav()"
+          [routerLink]="item.route"
+          [attr.aria-current]="item.key === activeNav() ? 'page' : null"
+          ><rc-icon [name]="item.icon" [size]="20" /><span class="label">{{ item.label }}</span></a
+        >
+      }
+    </nav>
+
+    <a class="nav__item logout" routerLink="/login">
+      <rc-icon name="logout" [size]="20" />
+      <span class="label">התנתקות</span>
+    </a>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <form class="search" role="search" (submit)="$event.preventDefault()">
+        <rc-icon name="search" [size]="20" />
+        <label class="visually-hidden" for="rc-shell-search">חיפוש</label>
+        <input id="rc-shell-search" type="search" placeholder="חיפוש משלוח, נמען או תבנית" />
+      </form>
+      <span class="sandbox" title="ספק ההודעות מדומה — אין שליחה אמיתית">Sandbox (מדומה)</span>
+      <span class="spacer"></span>
+      <button type="button" class="icon-btn" aria-label="התראות"><rc-icon name="bell" [size]="20" /></button>
+      <div class="user">
+        <span class="user__avatar" aria-hidden="true">{{ initials() }}</span>
+        <span class="user__text">
+          <span class="user__name">{{ userName() }}</span>
+          <span class="user__role">{{ userRole() }}</span>
+        </span>
+      </div>
+    </header>
+
+    <main class="content">
+      <ng-content />
+    </main>
+  </div>
+</div>
