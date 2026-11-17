@@ -27,7 +27,7 @@ export const NAV_ITEMS: readonly { key: NavKey; label: string; icon: IconName; r
   imports: [RouterLink, IconComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './app-shell.component.html',
-  styleUrl: './app-shell.component.css',
+  styleUrls: ['./app-shell.component.css', './app-shell.topbar.css'],
 })
 export class AppShellComponent {
   readonly activeNav = input<NavKey | null>(null);

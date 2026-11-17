@@ -1,3 +1,4 @@
+import net from 'node:net';
 import { execFileSync } from 'node:child_process';
 import { randomBytes, randomUUID } from 'node:crypto';
 import path from 'node:path';
@@ -16,6 +17,19 @@ const WEB_PORT = 4280;
  * created before rethrowing; on success e2e/global-teardown.ts does the same after the run.
  * Signing keys are generated per run and only passed through process environment: nothing is stored or committed.
  */
+async function portFree(port: number): Promise<boolean> {
+  const hosts = ['127.0.0.1', '::1'];
+  for (const host of hosts) {
+    const free = await new Promise<boolean>((resolve) => {
+      const srv = net.createServer();
+      srv.once('error', (e: NodeJS.ErrnoException) => resolve(e.code === 'EADDRNOTAVAIL' || e.code === 'EAFNOSUPPORT'));
+      srv.listen(port, host, () => srv.close(() => resolve(true)));
+    });
+    if (!free) return false;
+  }
+  return true;
+}
+
 export default async function globalSetup(): Promise<void> {
   const db = `ResidentComms_Test_${randomUUID().replace(/-/g, '')}`;
   assertTestDbName(db);
@@ -24,6 +38,9 @@ export default async function globalSetup(): Promise<void> {
   try {
     // Preflight before anything is created: without sqlcmd neither the seed nor the cleanup could work.
     execFileSync('sqlcmd', ['-?'], { stdio: 'ignore' });
+    // A stale API/web server from a hard-killed earlier run would answer the readiness probe while the new process fails to bind.
+    for (const port of [API_PORT, WEB_PORT])
+      if (!(await portFree(port))) throw new Error(`[e2e] port ${port} is already in use (stale process from an earlier run?). Stop it and run again.`);
     console.log('[e2e] building backend');
     for (const p of ['src/backend/ResidentComms.Api', 'src/backend/ResidentComms.Worker', 'src/backend/tools/ResidentComms.DbMigrator'])
       execFileSync('dotnet', ['build', p, '--nologo', '-v', 'q', '-clp:ErrorsOnly'], opts);

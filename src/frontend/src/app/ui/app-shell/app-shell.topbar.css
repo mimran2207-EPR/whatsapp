@@ -1,0 +1,162 @@
+/* Topbar, user block and responsive rules; loaded after app-shell.component.css so the media query wins ties. */
+.main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-24);
+  min-inline-size: 0;
+}
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-16);
+}
+.search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  inline-size: min(100%, 562px);
+  block-size: 56px;
+  padding-inline: 20px;
+  box-sizing: border-box;
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-xl);
+  background: var(--color-bg-surface);
+  box-shadow: var(--shadow-card);
+  color: var(--color-icon-default);
+}
+.search:has(:focus-visible) {
+  box-shadow: var(--shadow-focus-ring);
+}
+.search input {
+  flex: 1;
+  min-inline-size: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: 14px;
+}
+.search--soon {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.search input:disabled {
+  cursor: not-allowed;
+}
+.icon-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.icon-btn:disabled:hover {
+  background: transparent;
+}
+.skip-link {
+  position: fixed;
+  inset-block-start: var(--space-8);
+  inset-inline-start: var(--space-8);
+  z-index: 1000;
+  padding: var(--space-8) var(--space-16);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-surface);
+  color: var(--color-text-link);
+  font-weight: 700;
+  box-shadow: var(--shadow-card);
+  transform: translateY(-200%);
+}
+.skip-link:focus {
+  transform: none;
+  outline: none;
+  box-shadow: var(--shadow-focus-ring);
+}
+.sandbox {
+  padding-block: var(--space-4);
+  padding-inline: var(--space-12);
+  border: 1px dashed var(--color-status-unknown-border);
+  border-radius: var(--radius-full);
+  background: var(--color-status-unknown-bg);
+  color: var(--color-status-unknown-fg);
+  font-weight: 700;
+  font-size: 12px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+.spacer {
+  flex: 1;
+}
+.icon-btn {
+  display: inline-flex;
+  padding: var(--space-8);
+  border: 0;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--color-icon-default);
+  cursor: pointer;
+}
+.icon-btn:not(:disabled):hover,
+.nav__item:not(.nav__item--active):hover {
+  background: var(--color-bg-subtle);
+}
+.user {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+}
+.user__avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: 40px;
+  block-size: 40px;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-subtle);
+  color: var(--color-text-brand);
+  font-weight: 700;
+  font-size: 14px;
+}
+.user__text {
+  display: flex;
+  flex-direction: column;
+}
+.user__name {
+  font-weight: 700;
+  font-size: 14px;
+  line-height: 20px;
+  color: var(--color-text-primary);
+}
+.user__role {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--color-text-tertiary);
+}
+
+@media (max-width: 1099.98px) {
+  .shell {
+    grid-template-columns: 88px minmax(0, 1fr);
+  }
+  .sidebar {
+    align-items: center;
+    padding-inline: var(--space-12);
+  }
+  .brand__subtitle,
+  .label {
+    position: absolute;
+    inline-size: 1px;
+    block-size: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .brand__title {
+    font-size: 18px;
+  }
+  .new-send,
+  .nav__item {
+    justify-content: center;
+    inline-size: 56px;
+    padding-inline: 0;
+  }
+  .user__text {
+    display: none;
+  }
+}

@@ -1,5 +1,5 @@
 import { DOCUMENT } from '@angular/common';
-import { afterNextRender, ChangeDetectionStrategy, Component, inject, Injector, signal } from '@angular/core';
+import { afterNextRender, ChangeDetectionStrategy, Component, inject, Injector } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { Title } from '@angular/platform-browser';
 import { NavigationEnd, Router, RouterOutlet } from '@angular/router';
@@ -7,8 +7,8 @@ import { filter } from 'rxjs';
 
 /**
  * Root. Route-change accessibility (WCAG 2.4.3 / 4.1.3): after every navigation to a different page the focus moves to
- * the page's main heading (made programmatically focusable with tabindex=-1) and the page title (set by the router's
- * title strategy) is announced through a polite live region. The very first navigation (page load) is left alone: the
+ * the page's main heading (made programmatically focusable with tabindex=-1) and the document title (set by the router's
+ * title strategy) is kept in sync. No separate live region: focusing the heading is what screen readers announce. The very first navigation (page load) is left alone: the
  * browser and screen reader already announce a freshly loaded page.
  */
 @Component({
@@ -17,12 +17,9 @@ import { filter } from 'rxjs';
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <router-outlet />
-    <div class="visually-hidden" role="status" aria-live="polite" data-testid="route-announcer">{{ announcement() }}</div>
   `,
 })
 export class App {
-  protected readonly announcement = signal('');
-
   private readonly doc = inject(DOCUMENT);
   private readonly injector = inject(Injector);
   private readonly title = inject(Title);
@@ -56,9 +53,8 @@ export class App {
       return;
     }
     if (!heading.hasAttribute('tabindex')) heading.setAttribute('tabindex', '-1');
+    // Focusing the heading is the announcement (screen readers read the focused h1); a live region on top would read it twice.
     heading.focus();
-    // Re-announce even when two pages share a title: clear first, then set.
-    this.announcement.set('');
-    queueMicrotask(() => this.announcement.set(this.title.getTitle()));
+    this.doc.title = this.title.getTitle();
   }
 }

@@ -81,6 +81,7 @@ public sealed class CampaignRepository(SqlConnectionFactory db, TimeProvider clo
                 @"INSERT CampaignRevision(campaign_revision_id, tenant_id, campaign_id, revision_no, audience_version_id, channel, content_text, field_defaults_json, scheduled_at)
                   VALUES (@revisionId, @tenant, @campaignId, @no, @audience, @channel, @content, @defaultsJson, @scheduled)",
                 new { revisionId, tenant, campaignId, no = rev.RevisionNo + 1, audience, channel, content, defaultsJson, scheduled }, tx);
+            await CarryEditorsAsync(c, tx, tenant, rev.CampaignRevisionId, revisionId);
             invalidated = await c.ExecuteAsync(
                 @"UPDATE a SET invalidated_at = @now FROM Approval a
                   JOIN CampaignRevision r ON r.tenant_id = a.tenant_id AND r.campaign_revision_id = a.campaign_revision_id
@@ -118,6 +119,7 @@ public sealed class CampaignRepository(SqlConnectionFactory db, TimeProvider clo
                 revisionId, tenant, campaignId, no = rev.RevisionNo + 1, audience = rev.AudienceVersionId, channel = rev.Channel,
                 content = rev.ContentText, defaultsJson = rev.FieldDefaultsJson, scheduled = rev.ScheduledAt,
             }, tx);
+        await CarryEditorsAsync(c, tx, tenant, rev.CampaignRevisionId, revisionId);
         var invalidated = await c.ExecuteAsync(
             @"UPDATE a SET invalidated_at = @now FROM Approval a
               JOIN CampaignRevision r ON r.tenant_id = a.tenant_id AND r.campaign_revision_id = a.campaign_revision_id
@@ -134,6 +136,13 @@ public sealed class CampaignRepository(SqlConnectionFactory db, TimeProvider clo
         @"IF NOT EXISTS (SELECT 1 FROM CampaignRevisionActor WHERE tenant_id = @tenant AND campaign_revision_id = @revisionId AND user_id = @userId AND action = @action)
             INSERT CampaignRevisionActor(tenant_id, campaign_revision_id, user_id, action) VALUES (@tenant, @revisionId, @userId, @action)",
         new { tenant, revisionId, userId, action }, tx);
+
+    /// <summary>A new revision carries the previous revision's content, so it also carries everyone who authored that content.</summary>
+    private static Task CarryEditorsAsync(SqlConnection c, SqlTransaction tx, Guid tenant, Guid fromRevisionId, Guid toRevisionId) => c.ExecuteAsync(
+        @"INSERT CampaignRevisionActor(tenant_id, campaign_revision_id, user_id, action)
+          SELECT tenant_id, @toRevisionId, user_id, 'EDIT' FROM CampaignRevisionActor
+          WHERE tenant_id = @tenant AND campaign_revision_id = @fromRevisionId AND action = 'EDIT'",
+        new { tenant, fromRevisionId, toRevisionId }, tx);
 
     private static DateTime TruncateMs(DateTime d) => new(d.Ticks - d.Ticks % TimeSpan.TicksPerMillisecond, DateTimeKind.Utc);
 

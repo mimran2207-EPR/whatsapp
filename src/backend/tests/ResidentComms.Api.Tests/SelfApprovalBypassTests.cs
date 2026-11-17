@@ -87,4 +87,38 @@ public class SelfApprovalBypassTests(ApiFactory f) : IClassFixture<ApiFactory>
             await meir.PatchDraft(camp, new { contentText = Text("small edited") });
             await meir.Approve(camp, await meir.Submit(camp));
         });
+
+    // Round 2: editors of an earlier revision must follow the content into every later revision.
+    [Theory]
+    [InlineData("reopen")]
+    [InlineData("typo")]
+    public async Task Editor_of_an_earlier_revision_stays_a_contributor_after_reopen_or_patch_by_someone_else(string how)
+        => await WithThreshold(1, async () =>
+        {
+            var dana = await f.LoginAs("dana"); var noa = Noa(); var meir = await f.LoginAs("meir");
+            var (camp, _) = await DanaDraft(dana, "carry-" + how);
+            await noa.PatchDraft(camp, new { contentText = Text("rewritten by noa " + how) }); // rev1 EDIT noa
+            await dana.Submit(camp);
+            if (how == "reopen")
+                Assert.Equal(HttpStatusCode.OK, (await dana.SendWithKey(HttpMethod.Post, $"/v1/campaigns/{camp}/reopen", new { }, Guid.NewGuid().ToString())).StatusCode);
+            else
+                await dana.PatchDraft(camp, new { contentText = Text("rewritten by noa " + how) + " ." }); // dana fixes a typo on a SUBMITTED campaign -> rev2
+            var hash = await dana.Submit(camp);
+
+            await AssertSelfApproval(await noa.ApproveRaw(camp, hash));
+            Assert.DoesNotContain(await noa.GetFromJsonAsyncList("/v1/approvals"), a => a == camp);
+            Assert.Contains(await meir.GetFromJsonAsyncList("/v1/approvals"), a => a == camp);   // a third approver still sees it
+            await meir.Approve(camp, hash);
+        });
+
+    [Fact] public async Task Earlier_editor_may_still_approve_within_the_threshold()
+        => await WithThreshold(1000, async () =>
+        {
+            var dana = await f.LoginAs("dana"); var noa = Noa();
+            var (camp, _) = await DanaDraft(dana, "carry-small");
+            await noa.PatchDraft(camp, new { contentText = Text("noa small") });
+            await dana.Submit(camp);
+            await dana.SendWithKey(HttpMethod.Post, $"/v1/campaigns/{camp}/reopen", new { }, Guid.NewGuid().ToString());
+            await noa.Approve(camp, await dana.Submit(camp));
+        });
 }

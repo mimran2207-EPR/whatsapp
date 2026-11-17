@@ -27,17 +27,15 @@ describe('App', () => {
     expect(fixture.nativeElement.querySelector('router-outlet')).not.toBeNull();
   });
 
-  it('moves focus to the main heading and announces the title after a route change (not on first load)', async () => {
+  it('moves focus to the main heading and moves focus (no live region) after a route change (not on first load)', async () => {
     const fixture = TestBed.createComponent(App);
     document.body.appendChild(fixture.nativeElement);
     const router = TestBed.inject(Router);
-    const live = () => fixture.nativeElement.querySelector('[aria-live="polite"]').textContent.trim();
 
     await router.navigateByUrl('/a');
     fixture.detectChanges();
     await fixture.whenStable();
     expect(document.activeElement?.tagName).not.toBe('H1');
-    expect(live()).toBe('');
 
     await router.navigateByUrl('/b');
     fixture.detectChanges();
@@ -48,7 +46,7 @@ describe('App', () => {
     expect(h1.textContent).toBe('דף שני');
     expect(h1.getAttribute('tabindex')).toBe('-1');
     expect(document.activeElement).toBe(h1);
-    expect(live()).toBe('כותרת ב');
+    expect(fixture.nativeElement.querySelector('[aria-live]')).toBeNull(); // focus move only: no second announcement
     expect(document.title).toBe('כותרת ב');
     fixture.nativeElement.remove();
   });

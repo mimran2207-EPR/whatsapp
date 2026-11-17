@@ -61,7 +61,7 @@ Tracking `dataAsOf` is the time of the latest provider event received for the ca
 
 ## Separation of duties
 
-The "above N recipients, not the same person" approval rule is checked against the campaign creator, everyone who edited the current revision, and whoever submitted it (`CampaignRevisionActor`, migration V006).
+The "above N recipients, not the same person" approval rule is checked against the campaign creator, everyone who edited the current revision, and whoever submitted it (`CampaignRevisionActor`, migration V006). A new revision (edit after submit, reopen) copies the EDIT actors of the revision it was built from, because it carries that content; SUBMIT actors are not copied (a resubmission is a new act). So anyone who ever shaped the text stays a contributor for the rest of the campaign.
 
 ## Adapter failures
 
