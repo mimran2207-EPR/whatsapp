@@ -15,9 +15,27 @@ public static class ProviderEventEndpoints
     {
         v1.MapPost("/provider-events/mock-sms", async (HttpContext http, IConfiguration config, ProviderEventProcessor processor, ILogger<ProviderEventProcessor> log) =>
         {
+            // The cap is enforced before and while buffering: a declared length over the cap is refused outright,
+            // the server limit is lowered for this request, and the read itself stops at cap + 1 bytes.
+            if (http.Request.ContentLength > MaxBodyBytes) return Results.StatusCode(StatusCodes.Status413PayloadTooLarge);
+            var limit = http.Features.Get<Microsoft.AspNetCore.Http.Features.IHttpMaxRequestBodySizeFeature>();
+            if (limit is { IsReadOnly: false }) limit.MaxRequestBodySize = MaxBodyBytes;
+
             using var ms = new MemoryStream();
-            await http.Request.Body.CopyToAsync(ms, http.RequestAborted);
-            if (ms.Length > MaxBodyBytes) return Results.StatusCode(StatusCodes.Status413PayloadTooLarge);
+            var buffer = new byte[8192];
+            try
+            {
+                int n;
+                while ((n = await http.Request.Body.ReadAsync(buffer, http.RequestAborted)) > 0)
+                {
+                    if (ms.Length + n > MaxBodyBytes) return Results.StatusCode(StatusCodes.Status413PayloadTooLarge);
+                    ms.Write(buffer, 0, n);
+                }
+            }
+            catch (BadHttpRequestException ex) when (ex.StatusCode == StatusCodes.Status413PayloadTooLarge)
+            {
+                return Results.StatusCode(StatusCodes.Status413PayloadTooLarge);
+            }
             var body = ms.ToArray();
 
             // No key configured = nothing can be verified = nothing is accepted.

@@ -18,7 +18,13 @@ namespace ResidentComms.Worker.Dispatch;
 public sealed class OutboxDispatcher(SqlConnectionFactory db, ISmsAdapter adapter, ILogger<OutboxDispatcher> log) : BackgroundService
 {
     public const int MaxAttempts = 5;
-    private const int BatchSize = 50, LockSeconds = 30;
+    private const int BatchSize = 50;
+
+    /// <summary>
+    /// Lease on a claimed row (set at claim time and renewed per row in phase A). It must outlast a slow provider call,
+    /// otherwise another worker would "recover" a request that is still in flight.
+    /// </summary>
+    public TimeSpan Lease { get; init; } = TimeSpan.FromMinutes(2);
 
     private sealed record Claimed(long OutboxId, Guid TenantId, Guid MessageId, int Attempts);
     private sealed record Msg(string HandoffState, string ProcessingState, string DestinationValue, string IdempotencyKey, string? Text);
@@ -47,7 +53,7 @@ public sealed class OutboxDispatcher(SqlConnectionFactory db, ISmsAdapter adapte
                   FROM OutboxMessage o WITH (ROWLOCK, READPAST, UPDLOCK)
                   WHERE o.message_type = 'dispatch.sms' AND o.processed_at IS NULL AND o.available_at <= SYSUTCDATETIME()
                     AND (o.locked_until IS NULL OR o.locked_until < SYSUTCDATETIME())",
-                new { batch = BatchSize, @lock = LockSeconds }, cancellationToken: ct))).ToList();
+                new { batch = BatchSize, @lock = (int)Lease.TotalSeconds }, cancellationToken: ct))).ToList();
 
         foreach (var row in batch)
         {
@@ -74,22 +80,30 @@ public sealed class OutboxDispatcher(SqlConnectionFactory db, ISmsAdapter adapte
                 "SELECT attempt_number AS AttemptNumber, attempt_outcome AS Outcome FROM SendAttempt WHERE tenant_id = @t AND message_id = @id ORDER BY attempt_number",
                 new { t = row.TenantId, id = row.MessageId }, tx, cancellationToken: ct))).ToList();
 
-            if (m is null || m.ProcessingState == "CANCELED" || m.Text is null || m.HandoffState != "NOT_HANDED_OFF"
-                || attempts.Any(a => a.Outcome is "ACCEPTED" or "REJECTED" or "AMBIGUOUS"))
+            if (m is null)
             {
-                await MarkProcessed(c, tx, row, m is null ? "message missing" : m.Text is null ? "content purged" : "already decided or canceled", ct);
+                await MarkProcessed(c, tx, row, "message missing", ct);
                 await tx.CommitAsync(ct);
                 return;
             }
 
+            // An open attempt (outcome NULL) is checked BEFORE the handed-off guard: a previous run died after the request
+            // may have left, so the result is ambiguous. Never resend blindly, never leave it HANDED_OFF forever.
             if (attempts.FirstOrDefault(a => a.Outcome is null) is { } open)
             {
-                // A previous run died after the request may have left: ambiguous, never resend blindly.
                 await c.ExecuteAsync(new CommandDefinition(
-                    "UPDATE SendAttempt SET attempt_outcome = 'AMBIGUOUS', acceptance_ambiguous = 1 WHERE tenant_id = @t AND message_id = @id AND attempt_number = @n",
+                    "UPDATE SendAttempt SET attempt_outcome = 'AMBIGUOUS', acceptance_ambiguous = 1 WHERE tenant_id = @t AND message_id = @id AND attempt_number = @n AND attempt_outcome IS NULL",
                     new { t = row.TenantId, id = row.MessageId, n = open.AttemptNumber }, tx, cancellationToken: ct));
                 await SetAmbiguous(c, tx, row);
                 await MarkProcessed(c, tx, row, "recovered open attempt as ambiguous", ct);
+                await tx.CommitAsync(ct);
+                return;
+            }
+
+            if (m.ProcessingState == "CANCELED" || m.Text is null || m.HandoffState != "NOT_HANDED_OFF"
+                || attempts.Any(a => a.Outcome is "ACCEPTED" or "REJECTED" or "AMBIGUOUS"))
+            {
+                await MarkProcessed(c, tx, row, m.Text is null ? "content purged" : "already decided or canceled", ct);
                 await tx.CommitAsync(ct);
                 return;
             }
@@ -98,8 +112,9 @@ public sealed class OutboxDispatcher(SqlConnectionFactory db, ISmsAdapter adapte
             await c.ExecuteAsync(new CommandDefinition(
                 @"INSERT SendAttempt(attempt_id, tenant_id, message_id, attempt_number, attempt_reason, request_started_at)
                   VALUES (@attemptId, @t, @id, @n, @reason, SYSUTCDATETIME());
-                  UPDATE Message SET processing_state = 'IN_PROGRESS', handoff_state = 'HANDED_OFF' WHERE tenant_id = @t AND message_id = @id",
-                new { attemptId, t = row.TenantId, id = row.MessageId, n = attemptNumber, reason = attemptNumber == 1 ? "INITIAL" : "CONTROLLED_RETRY" }, tx, cancellationToken: ct));
+                  UPDATE Message SET processing_state = 'IN_PROGRESS', handoff_state = 'HANDED_OFF' WHERE tenant_id = @t AND message_id = @id;
+                  UPDATE OutboxMessage SET locked_until = DATEADD(second, @lease, SYSUTCDATETIME()) WHERE outbox_id = @outbox",
+                new { attemptId, t = row.TenantId, id = row.MessageId, n = attemptNumber, reason = attemptNumber == 1 ? "INITIAL" : "CONTROLLED_RETRY", lease = (int)Lease.TotalSeconds, outbox = row.OutboxId }, tx, cancellationToken: ct));
             msg = m;
             await tx.CommitAsync(ct);
         }
@@ -111,15 +126,25 @@ public sealed class OutboxDispatcher(SqlConnectionFactory db, ISmsAdapter adapte
         catch (Exception ex) { localError = ex.Message; }
 
         // ---- Phase B ----
-        await using (var c = await db.OpenAsync(ct))
-        await using (var tx = (SqlTransaction)await c.BeginTransactionAsync(ct))
+        // The provider's answer must be recorded even if shutdown was requested meanwhile: CancellationToken.None.
+        // Every attempt update is conditional on the attempt still being open; 0 rows = recovery already decided, do not overwrite.
+        var none = CancellationToken.None;
+        await using (var c = await db.OpenAsync(none))
+        await using (var tx = (SqlTransaction)await c.BeginTransactionAsync(none))
         {
             var p = new { t = row.TenantId, id = row.MessageId, n = attemptNumber, pm = outcome?.ProviderMessageId, err = outcome?.ErrorCode };
+            async Task<bool> CloseAttempt(string setClause, object args)
+            {
+                var n = await c.ExecuteAsync(new CommandDefinition(
+                    $"UPDATE SendAttempt SET {setClause}, response_received_at = SYSUTCDATETIME() WHERE tenant_id = @t AND message_id = @id AND attempt_number = @n AND attempt_outcome IS NULL",
+                    args, tx, cancellationToken: none));
+                if (n == 0) log.LogWarning("Attempt {N} of message {MessageId} was already decided (recovery); provider answer not applied", p.n, p.id);
+                return n > 0;
+            }
+
             if (outcome is null)
             {
-                await c.ExecuteAsync(new CommandDefinition(
-                    @"UPDATE SendAttempt SET attempt_outcome = 'LOCAL_FAILURE', response_received_at = SYSUTCDATETIME(), provider_error_code = LEFT(@e, 100) WHERE tenant_id = @t AND message_id = @id AND attempt_number = @n",
-                    new { p.t, p.id, p.n, e = localError }, tx, cancellationToken: ct));
+                if (!await CloseAttempt("attempt_outcome = 'LOCAL_FAILURE', provider_error_code = LEFT(@e, 100)", new { p.t, p.id, p.n, e = localError })) return;
                 var exhausted = row.Attempts + 1 >= MaxAttempts;
                 await c.ExecuteAsync(new CommandDefinition(
                     @"UPDATE Message SET handoff_state = 'NOT_HANDED_OFF',
@@ -129,33 +154,30 @@ public sealed class OutboxDispatcher(SqlConnectionFactory db, ISmsAdapter adapte
                              available_at = DATEADD(second, POWER(2, attempts + 1), SYSUTCDATETIME()),
                              processed_at = CASE WHEN @exhausted = 1 THEN SYSUTCDATETIME() ELSE NULL END
                       WHERE outbox_id = @outbox",
-                    new { p.t, p.id, exhausted, e = localError, outbox = row.OutboxId }, tx, cancellationToken: ct));
+                    new { p.t, p.id, exhausted, e = localError, outbox = row.OutboxId }, tx, cancellationToken: none));
             }
             else if (outcome.Kind == SendOutcome.Accepted)
             {
+                if (!await CloseAttempt("attempt_outcome = 'ACCEPTED', provider_message_id = @pm", new { p.t, p.id, p.n, p.pm })) return;
                 await c.ExecuteAsync(new CommandDefinition(
-                    @"UPDATE SendAttempt SET attempt_outcome = 'ACCEPTED', response_received_at = SYSUTCDATETIME(), provider_message_id = @pm WHERE tenant_id = @t AND message_id = @id AND attempt_number = @n;
-                      UPDATE Message SET handoff_state = 'ACCEPTED', provider_id = @provider, provider_message_id = @pm WHERE tenant_id = @t AND message_id = @id",
-                    new { p.t, p.id, p.n, p.pm, provider = ProviderEventProcessor.ProviderId }, tx, cancellationToken: ct));
-                await MarkProcessed(c, tx, row, null, ct);
+                    "UPDATE Message SET handoff_state = 'ACCEPTED', provider_id = @provider, provider_message_id = @pm WHERE tenant_id = @t AND message_id = @id",
+                    new { p.t, p.id, p.pm, provider = ProviderEventProcessor.ProviderId }, tx, cancellationToken: none));
+                await MarkProcessed(c, tx, row, null, none);
             }
             else if (outcome.Kind == SendOutcome.Rejected)
             {
+                if (!await CloseAttempt("attempt_outcome = 'REJECTED', provider_error_code = @err", new { p.t, p.id, p.n, p.err })) return;
                 await c.ExecuteAsync(new CommandDefinition(
-                    @"UPDATE SendAttempt SET attempt_outcome = 'REJECTED', response_received_at = SYSUTCDATETIME(), provider_error_code = @err WHERE tenant_id = @t AND message_id = @id AND attempt_number = @n;
-                      UPDATE Message SET handoff_state = 'REJECTED' WHERE tenant_id = @t AND message_id = @id",
-                    new { p.t, p.id, p.n, p.err }, tx, cancellationToken: ct));
-                await MarkProcessed(c, tx, row, null, ct);
+                    "UPDATE Message SET handoff_state = 'REJECTED' WHERE tenant_id = @t AND message_id = @id", new { p.t, p.id }, tx, cancellationToken: none));
+                await MarkProcessed(c, tx, row, null, none);
             }
             else // AMBIGUOUS: the request may have reached the provider. No retry.
             {
-                await c.ExecuteAsync(new CommandDefinition(
-                    @"UPDATE SendAttempt SET attempt_outcome = 'AMBIGUOUS', acceptance_ambiguous = 1, provider_error_code = @err WHERE tenant_id = @t AND message_id = @id AND attempt_number = @n",
-                    new { p.t, p.id, p.n, p.err }, tx, cancellationToken: ct));
+                if (!await CloseAttempt("attempt_outcome = 'AMBIGUOUS', acceptance_ambiguous = 1, provider_error_code = @err", new { p.t, p.id, p.n, p.err })) return;
                 await SetAmbiguous(c, tx, row);
-                await MarkProcessed(c, tx, row, null, ct);
+                await MarkProcessed(c, tx, row, null, none);
             }
-            await tx.CommitAsync(ct); // last step
+            await tx.CommitAsync(none); // last step
         }
     }
 
