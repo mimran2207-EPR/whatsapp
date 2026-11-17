@@ -38,12 +38,21 @@ describe('TextField (fix round 1)', () => {
     expect(label.getAttribute('for')).toBe('name');
   });
 
-  it('announces the error politely', () => {
+  it('announces the error through a live region that exists before the error appears', () => {
     const f = TestBed.createComponent(Host);
+    f.detectChanges();
+    const live: HTMLElement = f.nativeElement.querySelector('.rc-tf__error');
+    expect(live).not.toBeNull();
+    expect(live.getAttribute('aria-live')).toBe('polite');
+    expect(live.textContent!.trim()).toBe('');
+    const input: HTMLInputElement = f.nativeElement.querySelector('input');
+    expect(input.getAttribute('aria-describedby')).not.toBe(live.id);
+
     f.componentInstance.error.set('שדה חובה');
     f.detectChanges();
-    const err: HTMLElement = f.nativeElement.querySelector('.rc-tf__error');
-    expect(err.getAttribute('aria-live')).toBe('polite');
+    expect(f.nativeElement.querySelector('.rc-tf__error')).toBe(live);
+    expect(live.textContent).toContain('שדה חובה');
+    expect(input.getAttribute('aria-describedby')).toBe(live.id);
   });
 
   it('gives two instances distinct ids', () => {

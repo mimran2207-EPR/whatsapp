@@ -24,11 +24,11 @@ let nextId = 0;
       <!-- "for" is wired imperatively in ngAfterViewChecked (the projected control may bring its own id). -->
       <label class="rc-tf__label">{{ label() }}</label>
       <div class="rc-tf__box"><ng-content /></div>
-      @if (error()) {
-        <span class="rc-tf__error" aria-live="polite" [id]="errorId">{{ error() }}</span>
-      } @else if (helper()) {
+      @if (!error() && helper()) {
         <span class="rc-tf__helper" [id]="helperId">{{ helper() }}</span>
       }
+      <!-- Always-present live region so the error is announced when its text appears. -->
+      <span class="rc-tf__error" aria-live="polite" [id]="errorId">@if (error()) {{{ error() }}}</span>
     </div>
   `,
   styles: `
@@ -86,6 +86,10 @@ let nextId = 0;
     }
     .rc-tf__error {
       color: var(--color-status-danger-fg);
+    }
+    /* Empty live region stays in the accessibility tree; just cancel the flex gap. */
+    .rc-tf__error:empty {
+      margin-block-start: -6px;
     }
   `,
 })
