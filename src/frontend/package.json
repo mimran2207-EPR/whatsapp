@@ -12,7 +12,10 @@
     "test:tokens": "node --test scripts/*.test.mjs",
     "test:ui": "npm run tokens && ng test --watch=false",
     "test": "npm run test:tokens && npm run test:ui",
-    "e2e": "playwright test"
+    "e2e": "playwright test",
+    "demo:build": "node scripts/build-tokens.mjs && ng build --configuration demo",
+    "demo:publish": "node scripts/publish-demo.mjs",
+    "e2e:demo": "npm run demo:build && playwright test -c playwright.demo.config.ts"
   },
   "private": true,
   "packageManager": "npm@11.9.0",

@@ -53,13 +53,13 @@ function clean(fields: string[]): string[] {
 
 /* ---------- XLSX: just enough zip + SpreadsheetML to read row 1 of the first visible sheet ---------- */
 
-interface ZipEntry {
+export interface ZipEntry {
   method: number;
   compressedSize: number;
   localOffset: number;
 }
 
-function zipEntries(buf: Uint8Array): Map<string, ZipEntry> {
+export function zipEntries(buf: Uint8Array): Map<string, ZipEntry> {
   const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
   let eocd = -1;
   for (let i = buf.length - 22; i >= Math.max(0, buf.length - 65557); i--) {
@@ -87,7 +87,7 @@ function zipEntries(buf: Uint8Array): Map<string, ZipEntry> {
   return out;
 }
 
-async function readEntry(buf: Uint8Array, entries: Map<string, ZipEntry>, path: string): Promise<string | null> {
+export async function readEntry(buf: Uint8Array, entries: Map<string, ZipEntry>, path: string): Promise<string | null> {
   const e = entries.get(path);
   if (!e) return null;
   const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
@@ -99,15 +99,15 @@ async function readEntry(buf: Uint8Array, entries: Map<string, ZipEntry>, path: 
   return new Response(stream).text();
 }
 
-function xml(text: string): Document {
+export function xml(text: string): Document {
   return new DOMParser().parseFromString(text, 'application/xml');
 }
 
-function byTag(node: Document | Element, tag: string): Element[] {
+export function byTag(node: Document | Element, tag: string): Element[] {
   return Array.from(node.getElementsByTagNameNS('*', tag));
 }
 
-function colIndex(ref: string): number {
+export function colIndex(ref: string): number {
   let n = 0;
   for (const ch of ref.replace(/\d+$/, '')) n = n * 26 + (ch.charCodeAt(0) - 64);
   return n;
