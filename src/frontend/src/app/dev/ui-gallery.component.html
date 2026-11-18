@@ -1,0 +1,115 @@
+<rc-app-shell activeNav="campaigns">
+  <h1 class="t-h1-24">רכיבי <bdi>UI</bdi> — השוואה ל-<bdi>Figma 02 Components</bdi></h1>
+
+  <section>
+    <h2 class="t-h3-18">Button</h2>
+    <div class="grid grid--4">
+      @for (v of variants; track v) {
+        <rc-button [variant]="v"><rc-icon name="plus" [size]="18" />פעולה</rc-button>
+        <rc-button [variant]="v" [disabled]="true" disabledReason="המשלוח אושר ולא ניתן לשנותו"
+          ><rc-icon name="plus" [size]="18" />פעולה</rc-button
+        >
+      }
+    </div>
+    <rc-button><rc-icon name="send" [size]="18" />אישור ושליחת <span class="num">3,180</span> הודעות</rc-button>
+  </section>
+
+  <section>
+    <h2 class="t-h3-18">StatusBadge</h2>
+    <div class="row-wrap">
+      @for (s of statuses; track s) {
+        <rc-status-badge [status]="s" [label]="labels[s]" />
+      }
+    </div>
+  </section>
+
+  <section>
+    <h2 class="t-h3-18">ChannelChip</h2>
+    <div class="row-wrap">
+      <rc-channel-chip channel="WHATSAPP" />
+      <rc-channel-chip channel="SMS" />
+      <rc-channel-chip channel="EMAIL" />
+    </div>
+  </section>
+
+  <section>
+    <h2 class="t-h3-18">KpiCard</h2>
+    <div class="grid grid--4">
+      <rc-kpi-card kind="count" title="התקבלו אצל הספק" [value]="2846" definition="מתוך 3,180 הודעות" dataAsOf="10:42" />
+      <rc-kpi-card kind="rate" title="שיעור מסירה תפעולי" value="40%" definition="מונה 2 · מכנה 5 (הועברו לספק)" dataAsOf="10:42" />
+      <rc-kpi-card kind="unknown" title="לא ידוע — טרם התקבל אישור מסירה" [value]="312" definition="מתוך 3,180 הודעות · לעולם לא מוסתר" dataAsOf="10:42" />
+      <rc-kpi-card kind="rate" title="שיעור קריאה" [value]="null" definition="הערוץ אינו מדווח קריאה" dataAsOf="10:42" />
+    </div>
+  </section>
+
+  <section>
+    <h2 class="t-h3-18">StepItem</h2>
+    <div class="row-wrap">
+      @for (s of steps; track s.state; let i = $index) {
+        <rc-step-item [state]="s.state" [index]="i + 1" [label]="s.label" [hint]="s.hint" />
+      }
+    </div>
+  </section>
+
+  <section>
+    <h2 class="t-h3-18">PreflightItem</h2>
+    <div class="stack">
+      <rc-preflight-item kind="blocker" title='שדה דינמי חסר: "שם_ילד" ב-14 נמענים' meta="שלב 3 · מה" actionLabel="תקן" />
+      <rc-preflight-item kind="warning" title="שליחה מחוץ לחלון השעות (20:00–08:00)" meta="שלב 6 · תזמון" actionLabel="בדוק" />
+      <rc-preflight-item kind="passed" title="כל המסמכים תואמים לנמענים (3,180)" meta="שלב 4 · מסמכים" />
+    </div>
+  </section>
+
+  <section>
+    <h2 class="t-h3-18">Banner</h2>
+    <div class="stack">
+      <rc-banner kind="info" message="המעקב החל בתאריך 03.11.2026 — אין היסטוריה מוקדמת." actionLabel="פרטים" />
+      <rc-banner kind="warning" message="שינית את הקהל; יש לבדוק מחדש 126 מסמכים. האישור הקודם בוטל." actionLabel="פרטים" />
+      <rc-banner kind="danger" message="שיעור כשלים חריג בתחילת המשלוח — היתרה הושהתה." actionLabel="פרטים" />
+      <rc-banner kind="unknown" message="14 הודעות בתוצאה לא ידועה — מתבצע בירור מול הספק. אין שליחה חוזרת עד לבירור." actionLabel="פרטים" />
+      <rc-banner kind="success" message="2,846 הודעות התקבלו אצל הספק. תוצאות המסירה ממשיכות להתעדכן." actionLabel="פרטים" />
+    </div>
+  </section>
+
+  <section>
+    <h2 class="t-h3-18">GridRow</h2>
+    <div class="stack">
+      @for (d of ['comfortable', 'compact']; track d) {
+        @for (sel of [false, true]; track sel) {
+          <rc-grid-row [density]="$any(d)" [selected]="sel">
+            <span class="cell cell--strong num"><bdi>050-***-**12</bdi> · ר. כ.</span>
+            <rc-channel-chip channel="SMS" />
+            <span class="cell cell--strong">הזנה — נובמבר</span>
+            <span class="cell">תזכורת תשלום הזנה v3</span>
+            <span class="cell num">ניסיון 1 · 10:41</span>
+            <rc-status-badge status="Delivered" label="נמסר" />
+            <span class="cell">1 מסמך</span>
+          </rc-grid-row>
+        }
+      }
+    </div>
+  </section>
+
+  <section>
+    <h2 class="t-h3-18">TextField</h2>
+    <div class="grid grid--4">
+      <rc-text-field label="שם המשלוח" helper="שם פנימי, לא נשלח לתושב"><input value="תזכורת תשלום הזנה — נובמבר" /></rc-text-field>
+      <rc-text-field label="שם המשלוח" error="שדה חובה"><input value="" /></rc-text-field>
+      <rc-text-field label="שם המשלוח" helper="נעול — המשלוח אושר"><input value="תזכורת תשלום הזנה — נובמבר" disabled /></rc-text-field>
+    </div>
+  </section>
+
+  <section>
+    <h2 class="t-h3-18">FileDropzone</h2>
+    <rc-file-dropzone accept=".xlsx,.csv" />
+  </section>
+
+  <section>
+    <h2 class="t-h3-18">Icons</h2>
+    <div class="row-wrap icons">
+      @for (n of icons; track n) {
+        <span class="icon-cell" [title]="n"><rc-icon [name]="n" /></span>
+      }
+    </div>
+  </section>
+</rc-app-shell>

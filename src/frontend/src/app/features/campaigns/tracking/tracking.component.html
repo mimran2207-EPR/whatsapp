@@ -1,0 +1,92 @@
+<div class="page">
+  <div class="page-head">
+    <h1 class="t-h1-24">מעקב משלוח</h1>
+    <span class="sandbox-tag">Sandbox (מדומה)</span>
+    <span class="asof num">נכון ל-{{ asOf() }}@if (polling()) {
+      · מתעדכן כל 5 שניות
+    }</span>
+    <a class="page-head__actions link-btn" routerLink="/campaigns">לכל המשלוחים</a>
+  </div>
+
+  <!-- Summary for screen readers, at most once every 30s (not on every 5s poll). -->
+  <div class="visually-hidden" aria-live="polite">{{ announcement() }}</div>
+
+  @if (fatal()) {
+    <rc-banner kind="danger" [message]="fatal()! + ' · העדכון האוטומטי הופסק.'" />
+  } @else if (error()) {
+    <p class="error-text" role="alert">{{ error() }} · מנסה שוב בעוד כמה שניות</p>
+  }
+
+  @if (view(); as v) {
+    <rc-banner [kind]="bannerKind()" [message]="v.bannerHe" />
+
+    <section class="card stack" aria-labelledby="tr-delivery">
+      <h2 id="tr-delivery" class="t-h3-18 section-title">מסירה · <span class="num">{{ fmt(v.messages) }}</span> הודעות</h2>
+      <div class="bar" aria-hidden="true">
+        @for (seg of segments; track seg.key) {
+          @if (count(seg.key) > 0) {
+            <span [class]="'bar__seg bar__seg--' + seg.key" [style.flex-grow]="count(seg.key)"></span>
+          }
+        }
+      </div>
+      <ul class="legend">
+        @for (seg of segments; track seg.key) {
+          <li>
+            <span [class]="'legend__dot bar__seg--' + seg.key" aria-hidden="true"></span>
+            <span>{{ seg.label }}</span>
+            <strong class="num">{{ fmt(count(seg.key)) }}</strong>
+          </li>
+        }
+      </ul>
+    </section>
+
+    <div class="kpis">
+      <rc-kpi-card
+        title="התקבלו אצל הספק"
+        [value]="kpi().accepted?.value ?? null"
+        [definition]="kpi().accepted ? 'מתוך ' + fmt(kpi().accepted!.denominator) + ' הודעות' : null"
+        [dataAsOf]="asOf()"
+      />
+      <rc-kpi-card
+        kind="rate"
+        title="שיעור מסירה תפעולי"
+        [value]="rateText()"
+        [definition]="kpi().rate ? fmt(kpi().rate!.numerator) + ' נמסרו מתוך ' + fmt(kpi().rate!.denominator) + ' שהועברו לספק' : null"
+        [dataAsOf]="asOf()"
+      />
+      <rc-kpi-card title="נכשלו" [value]="v.delivery.failed" definition="לפי דיווח הספק" [dataAsOf]="asOf()" />
+      <rc-kpi-card kind="unknown" title="לא ידוע" [value]="v.delivery.unknown" definition="נשארים במכנה עד בירור" [dataAsOf]="asOf()" />
+    </div>
+
+    <section class="card stack" aria-labelledby="tr-exc">
+      <h2 id="tr-exc" class="t-h3-18 section-title">חריגים</h2>
+      @if (v.exceptions.length === 0) {
+        <p class="empty">אין חריגים כרגע</p>
+      } @else {
+        <table class="exc">
+          <caption class="visually-hidden">הודעות עם חריג</caption>
+          <thead>
+            <tr>
+              <th scope="col">נמען (ממוסך)</th>
+              <th scope="col">סטטוס</th>
+              <th scope="col">ניסיון אחרון</th>
+              <th scope="col">פעולה הבאה</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (x of v.exceptions; track x.messageId) {
+              <tr>
+                <td class="num"><bdi dir="ltr">{{ x.recipientMasked }}</bdi></td>
+                <td><rc-status-badge [status]="status(x.displayStatus)" [label]="x.displayLabelHe" /></td>
+                <td>{{ x.lastAttempt ?? 'לא ידוע' }}</td>
+                <td>{{ x.nextActionHe }}</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      }
+    </section>
+  } @else if (!error() && !fatal()) {
+    <p class="muted" role="status">טוען נתוני מעקב…</p>
+  }
+</div>

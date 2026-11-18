@@ -1,0 +1,108 @@
+<div class="page">
+  <div class="page-head">
+    <h1 class="t-h1-24">תיבת אישורים</h1>
+    <span class="sandbox-tag">Sandbox (מדומה)</span>
+  </div>
+
+  @if (listError()) {
+    <p class="error-text" role="alert">{{ listError() }}</p>
+  }
+
+  <div class="layout">
+    <div class="stack">
+      <section class="stack" aria-labelledby="ap-list">
+        <h2 id="ap-list" class="t-h3-18 section-title">ממתינים לאישור</h2>
+        @if (items() === null) {
+          <p class="muted" role="status">טוען…</p>
+        } @else if (items()!.length === 0) {
+          <p class="empty">
+            @if (auth.user()?.role === 'approver') {
+              אין משלוחים שממתינים לאישורך
+            } @else {
+              אין משלוחים לאישור. רק משתמש עם הרשאת אישור רואה כאן משלוחים.
+            }
+          </p>
+        } @else {
+          <ul class="list">
+            @for (a of items(); track a.campaignId) {
+              <li>
+                <button type="button" class="pick" [attr.aria-pressed]="selected()?.item?.campaignId === a.campaignId" (click)="select(a.campaignId)">
+                  <rc-grid-row [selected]="selected()?.item?.campaignId === a.campaignId">
+                    <span class="pick__name">{{ a.name }}</span>
+                    <span class="muted num">{{ fmt(a.recipients) }} נמענים</span>
+                  </rc-grid-row>
+                </button>
+              </li>
+            }
+          </ul>
+        }
+      </section>
+
+      @if (ready().length > 0) {
+        <section class="stack" aria-labelledby="ap-ready">
+          <h2 id="ap-ready" class="t-h3-18 section-title">אושרו וממתינים לשליחה</h2>
+          <ul class="list">
+            @for (a of ready(); track a.campaignId) {
+              <li>
+                <button type="button" class="pick" [attr.aria-pressed]="selected()?.item?.campaignId === a.campaignId" (click)="select(a.campaignId)">
+                  <rc-grid-row [selected]="selected()?.item?.campaignId === a.campaignId">
+                    <span class="pick__name">{{ a.name }}</span>
+                    <span class="muted num">{{ fmt(a.recipients) }} נמענים · אושר</span>
+                  </rc-grid-row>
+                </button>
+              </li>
+            }
+          </ul>
+        </section>
+      }
+    </div>
+
+    <section class="card stack" aria-labelledby="ap-detail">
+      @if (selected(); as sel) {
+        <h2 id="ap-detail" class="t-h2-20 section-title">{{ sel.item.name }}</h2>
+        <dl class="counts">
+          <div><dt>מטרה</dt><dd>{{ purpose(sel.item.purpose) }}</dd></div>
+          <div><dt>הוגש על ידי</dt><dd>{{ sel.item.submittedBy }}</dd></div>
+          <div><dt>נמענים</dt><dd>{{ fmt(sel.item.recipients) }}</dd></div>
+          <div>
+            <dt>ערוץ</dt>
+            <dd>
+              @if (channel(sel.item.channel); as ch) {
+                <rc-channel-chip [channel]="ch" />
+              } @else {
+                לא ידוע
+              }
+            </dd>
+          </div>
+        </dl>
+
+        <section class="preview" aria-labelledby="ap-preview">
+          <h3 id="ap-preview" class="t-body-14-medium">תצוגה מקדימה</h3>
+          @if (detail()?.preview; as p) {
+            <p class="muted num">אל: <bdi>{{ p.recipientName || 'לא ידוע' }}</bdi> · <bdi dir="ltr">{{ p.recipientPhone }}</bdi> (ממוסך)</p>
+            <div class="bubble">{{ p.text }}</div>
+          } @else if (detail()) {
+            <p class="muted">אין נמען זכאי להצגה</p>
+          } @else {
+            <p class="muted" role="status">טוען תצוגה מקדימה…</p>
+          }
+        </section>
+
+        <p class="binding t-body-lg-16">{{ binding() }}</p>
+
+        <div class="detail__error" aria-live="assertive">
+          @if (error()) {
+            <p class="error-text">{{ error() }}</p>
+          }
+        </div>
+
+        <div class="actions">
+          <rc-button [disabled]="busy()" (click)="act()">{{ primaryLabel() }}</rc-button>
+        </div>
+      } @else {
+        <h2 id="ap-detail" class="visually-hidden">פרטי המשלוח</h2>
+        <p class="empty">בחרו משלוח מהרשימה</p>
+      }
+    </section>
+  </div>
+</div>

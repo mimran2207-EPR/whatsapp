@@ -1,0 +1,73 @@
+<div class="page">
+  <section class="hero" aria-labelledby="home-greeting">
+    <h1 id="home-greeting" class="t-h1-24">שלום, {{ auth.user()?.name }}</h1>
+    <p class="t-lead-24 hero__lead">מה נשלח היום לתושבים?</p>
+  </section>
+
+  <nav class="quick" aria-label="פעולות מהירות">
+    @for (a of actions; track a.label) {
+      <a [class]="'quick__card quick__card--' + a.tone + ' card-link'" [routerLink]="a.route">
+        <span class="quick__icon"><rc-icon [name]="a.icon" [size]="22" /></span>
+        <span class="quick__label">{{ a.label }}</span>
+        <span class="quick__hint">{{ a.hint }}</span>
+      </a>
+    }
+  </nav>
+
+  @if (error()) {
+    <p class="error-text" role="alert">{{ error() }}</p>
+  }
+
+  <div class="columns">
+    <section class="card stack" aria-labelledby="home-tasks">
+      <h2 id="home-tasks" class="t-h3-18 section-title">המשימות שלי</h2>
+      @if (campaigns() === null) {
+        <p class="muted" role="status">טוען…</p>
+      } @else if (tasks().length === 0) {
+        <p class="empty">אין משימות פתוחות</p>
+      } @else {
+        <ul class="list">
+          @for (t of tasks(); track t.key) {
+            <li>
+              <a class="list__item card-link" [routerLink]="t.route" [queryParams]="t.query ?? null">
+                <span class="list__text">{{ t.text }}</span>
+                <span class="list__meta num">{{ t.meta }}</span>
+                <rc-icon name="chevron-left" [size]="18" />
+              </a>
+            </li>
+          }
+        </ul>
+      }
+    </section>
+
+    <section class="card stack" aria-labelledby="home-recent">
+      <div class="page-head">
+        <h2 id="home-recent" class="t-h3-18 section-title">משלוחים אחרונים</h2>
+        <a class="page-head__actions link-btn" routerLink="/campaigns">לכל המשלוחים</a>
+      </div>
+      @if (campaigns() === null) {
+        <p class="muted" role="status">טוען…</p>
+      } @else if (recent().length === 0) {
+        <p class="empty">עדיין אין משלוחים</p>
+      } @else {
+        <ul class="list">
+          @for (c of recent(); track c.campaignId) {
+            <li class="list__item">
+              @if (campaignLink(c); as link) {
+                <a class="list__text link-btn" [routerLink]="link" [queryParams]="linkQuery(c)">{{ c.name }}</a>
+              } @else {
+                <span class="list__text">{{ c.name }}</span>
+              }
+              @if (channel(c.channel); as ch) {
+                <rc-channel-chip [channel]="ch" />
+              }
+              <span class="list__meta">{{ stateLabel(c.state) }}</span>
+              <span class="list__meta num">{{ fmt(c.recipients) }} נמענים</span>
+            </li>
+          }
+        </ul>
+        <p class="muted num list__asof">נכון ל-{{ time(recent()[0].dataAsOf) }}</p>
+      }
+    </section>
+  </div>
+</div>

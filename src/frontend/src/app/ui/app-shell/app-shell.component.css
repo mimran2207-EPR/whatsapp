@@ -1,0 +1,94 @@
+:host {
+  display: block;
+  min-block-size: 100vh;
+}
+.shell {
+  display: grid;
+  grid-template-columns: 258px minmax(0, 1fr);
+  gap: var(--space-24);
+  min-block-size: 100vh;
+  padding: var(--space-16);
+  box-sizing: border-box;
+  font-family: var(--font-family);
+}
+.sidebar {
+  position: sticky;
+  inset-block-start: var(--space-16);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
+  block-size: calc(100vh - 2 * var(--space-16));
+  padding: var(--space-24) 20px;
+  box-sizing: border-box;
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-2xl);
+  background: var(--color-bg-surface);
+  box-shadow: var(--shadow-card);
+}
+.brand {
+  display: flex;
+  flex-direction: column;
+  padding-inline: var(--space-8);
+}
+.brand__title {
+  font-weight: 700;
+  font-size: 24px;
+  line-height: 32px;
+  color: var(--color-text-brand);
+}
+.brand__subtitle {
+  font-weight: 500;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--color-text-tertiary);
+}
+.new-send {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-8);
+  block-size: var(--control-height);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-brand);
+  box-shadow: var(--shadow-brand-button);
+  color: var(--color-text-on-action);
+  font-weight: 700;
+  font-size: 14px;
+  line-height: 20px;
+  text-decoration: none;
+}
+.new-send:hover {
+  background: var(--color-bg-brand-hover);
+}
+.nav {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.nav__item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  min-block-size: 54px;
+  padding-inline: var(--space-24) var(--space-16);
+  box-sizing: border-box;
+  border-radius: var(--radius-lg);
+  color: var(--color-text-link);
+  font-weight: 500;
+  font-size: 16px;
+  line-height: 24px;
+  text-decoration: none;
+}
+.nav__item--active {
+  background: var(--color-bg-brand);
+  box-shadow: var(--shadow-brand-button);
+  color: var(--color-text-on-action);
+}
+.new-send:focus-visible,
+.nav__item:focus-visible,
+.icon-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus-ring);
+}

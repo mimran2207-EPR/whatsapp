@@ -1,0 +1,107 @@
+/* Banner gradient (Figma 535:11253): the one approved local exception to "tokens only" (gradients are not tokens).
+   Both stops keep white text (--color-text-on-brand) at >= 4.5:1 for ANY text size; scripts/home-hero-contrast.test.mjs
+   enforces it. The end stop is darker than the Figma #0FA3B1 (3.05:1, large text only) for that reason. */
+:host {
+  --home-banner-from: #13737D;
+  --home-banner-to: #0C7F8A;
+  display: block;
+}
+
+.hero {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  padding: var(--space-32);
+  border-radius: var(--radius-2xl);
+  /* 270deg = toward the left: in this RTL app the dark stop sits under the text on the start (right) side. */
+  background: linear-gradient(270deg, var(--home-banner-from), var(--home-banner-to));
+  color: var(--color-text-on-brand);
+  box-shadow: var(--shadow-card);
+}
+
+.hero h1,
+.hero__lead {
+  margin: 0;
+}
+
+.quick {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--space-16);
+}
+
+.quick__card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  padding: 20px;
+  border: 1px solid;
+  border-radius: var(--radius-xl);
+  text-decoration: none;
+}
+
+.quick__card--sms { background: var(--color-channel-sms-bg); border-color: var(--color-channel-sms-border); color: var(--color-channel-sms-fg); }
+.quick__card--whatsapp { background: var(--color-channel-whatsapp-bg); border-color: var(--color-channel-whatsapp-border); color: var(--color-channel-whatsapp-fg); }
+.quick__card--email { background: var(--color-channel-email-bg); border-color: var(--color-channel-email-border); color: var(--color-channel-email-fg); }
+.quick__card--pink { background: var(--color-accent-pink-bg); border-color: var(--color-accent-pink-border); color: var(--color-accent-pink-fg); }
+
+.quick__card:hover {
+  box-shadow: var(--shadow-card-hover);
+}
+
+.quick__icon {
+  display: inline-flex;
+}
+
+.quick__label {
+  font-weight: 700;
+  font-size: 16px;
+  line-height: 24px;
+}
+
+.quick__hint {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--color-text-body);
+}
+
+.columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: var(--space-24);
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.list__item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-12);
+  padding-block: var(--space-12);
+  border-block-end: 1px solid var(--color-border-default);
+  color: var(--color-text-body);
+  text-decoration: none;
+}
+
+.list__text {
+  flex: 1;
+  min-inline-size: 0;
+  font-weight: 500;
+}
+
+.list__meta {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+.list__asof {
+  margin: 0;
+  font-size: 12px;
+}

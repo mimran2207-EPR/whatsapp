@@ -1,9 +1,13 @@
 {
   // Static placeholder until the Angular app exists (phase 1).
-  // Replace "directory" with the Angular build output (e.g. ./src/frontend/dist/browser).
+  // Replace "directory" with the Angular build output (e.g. ./src/frontend/dist/resident-comms/browser).
+  // M1 deliberately stays on ./public: the Angular app needs the API, and API hosting is undecided (ADR, P8).
+  // Do not point this at src/frontend/dist/resident-comms/browser until then; the placeholder is what Cloudflare serves.
   "name": "whatsapp",
   "compatibility_date": "2026-11-01",
   "assets": {
     "directory": "./public"
-  }
+  },
+  // Non-production branches/PRs are built with `npx wrangler preview`, which requires this block (it may be empty).
+  "previews": {}
 }

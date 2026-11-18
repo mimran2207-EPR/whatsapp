@@ -1,0 +1,114 @@
+<div class="stack">
+  <h2 id="wizard-step-heading" tabindex="-1" class="t-h2-20 section-title">למי שולחים?</h2>
+
+  <div class="grid2">
+    <rc-text-field label="שם המשלוח" [helper]="locked() ? 'המשלוח נוצר; השם נשמר' : 'לדוגמה: הזנה — נובמבר'">
+      <input type="text" maxlength="200" [value]="s.name()" [disabled]="locked()" (input)="onName($event)" />
+    </rc-text-field>
+    <rc-text-field label="מטרת התקשורת">
+      <select [disabled]="locked()" (change)="onPurpose($event)">
+        @for (p of purposes; track p[0]) {
+          <option [value]="p[0]" [selected]="p[0] === s.purpose()">{{ p[1] }}</option>
+        }
+      </select>
+    </rc-text-field>
+  </div>
+
+  @if (s.summary(); as imp) {
+    <section class="result" aria-labelledby="imp-title">
+      <h3 id="imp-title" class="t-h3-18 section-title">תוצאת הייבוא · {{ s.fileName() }}</h3>
+      <dl class="counts">
+        <div><dt>שורות</dt><dd>{{ fmt(imp.rowCount) }}</dd></div>
+        <div><dt>תקינות</dt><dd>{{ fmt(imp.validCount) }}</dd></div>
+        <div><dt>פסולות</dt><dd>{{ fmt(imp.invalidCount) }}</dd></div>
+      </dl>
+      @if (codes().length > 0) {
+        <ul class="codes">
+          @for (c of codes(); track c[0]) {
+            <li><span>{{ codeHe(c[0]) }}</span> <span class="num">{{ fmt(c[1]) }}</span></li>
+          }
+        </ul>
+      }
+      <div class="result__links">
+        @if (imp.invalidCount > 0 && imp.importRunId && !s.importErrors()) {
+          <button type="button" class="link-btn" (click)="s.loadImportErrors()">רשימת השגיאות ({{ fmt(imp.invalidCount) }})</button>
+        }
+        @if (!s.locked()) {
+          <button type="button" class="link-btn" (click)="replaceFile()">החלפת קובץ</button>
+        }
+      </div>
+      @if (s.importErrors(); as errs) {
+        <table class="errors">
+          <caption class="visually-hidden">שורות שנפסלו בייבוא</caption>
+          <thead>
+            <tr><th scope="col">שורה</th><th scope="col">מזהה (ממוסך)</th><th scope="col">סיבות</th></tr>
+          </thead>
+          <tbody>
+            @for (e of errs; track e.row) {
+              <tr>
+                <td class="num">{{ e.row }}</td>
+                <td class="num"><bdi>{{ e.sourceRecipientId || 'לא ידוע' }}</bdi></td>
+                <td>
+                  @for (c of e.codes; track c; let last = $last) {
+                    {{ codeHe(c) }}{{ last ? '' : ' · ' }}
+                  }
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      }
+    </section>
+  } @else {
+    <rc-file-dropzone hint="XLSX או CSV · עד 10MB · נוסחאות לא מורצות" [maxBytes]="10485760" (file)="s.chooseFile($event)" />
+    @if (s.fileName() && s.file()) {
+      <p class="muted">קובץ נבחר: <bdi>{{ s.fileName() }}</bdi></p>
+    }
+    @if (s.headersError()) {
+      <p class="error-text" role="alert">{{ s.headersError() }}</p>
+    }
+
+    @if (s.headers().length > 0) {
+      <fieldset class="mapping">
+        <legend class="t-body-14-medium">מיפוי עמודות</legend>
+        <div class="grid3">
+          <rc-text-field label="מזהה נמען (ת.ז) · חובה">
+            <select (change)="onMap('idColumn', $event)">
+              <option value="">בחרו עמודה</option>
+              @for (h of s.headers(); track h) {
+                <option [value]="h" [selected]="h === s.mapping().idColumn">{{ h }}</option>
+              }
+            </select>
+          </rc-text-field>
+          <rc-text-field label="שם הנמען">
+            <select (change)="onMap('nameColumn', $event)">
+              <option value="">ללא</option>
+              @for (h of s.headers(); track h) {
+                <option [value]="h" [selected]="h === s.mapping().nameColumn">{{ h }}</option>
+              }
+            </select>
+          </rc-text-field>
+          <rc-text-field label="טלפון נייד · חובה">
+            <select (change)="onMap('phoneColumn', $event)">
+              <option value="">בחרו עמודה</option>
+              @for (h of s.headers(); track h) {
+                <option [value]="h" [selected]="h === s.mapping().phoneColumn">{{ h }}</option>
+              }
+            </select>
+          </rc-text-field>
+        </div>
+        <fieldset class="vars">
+          <legend class="t-caption-12 muted">שדות אישיים לשימוש בתוכן</legend>
+          @for (h of s.headers(); track h) {
+            @if (h !== s.mapping().idColumn && h !== s.mapping().phoneColumn && h !== s.mapping().nameColumn) {
+              <label class="vars__opt">
+                <input type="checkbox" [checked]="s.mapping().variableColumns.includes(h)" (change)="onVariable(h, $event)" />
+                {{ h }}
+              </label>
+            }
+          }
+        </fieldset>
+      </fieldset>
+    }
+  }
+</div>

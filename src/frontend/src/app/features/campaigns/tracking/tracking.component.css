@@ -1,0 +1,49 @@
+.asof {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+.bar {
+  display: flex;
+  block-size: 16px;
+  overflow: hidden;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-muted);
+}
+
+.bar__seg {
+  flex-basis: 0;
+  min-inline-size: 4px;
+}
+
+.bar__seg--delivered { background: var(--color-status-success-fg); }
+.bar__seg--sentOrNotReported { background: var(--color-status-progress-fg); }
+.bar__seg--unknown { background: var(--color-status-unknown-border); }
+.bar__seg--failed { background: var(--color-status-danger-fg); }
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-8) var(--space-24);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-8);
+}
+
+.legend__dot {
+  inline-size: 12px;
+  block-size: 12px;
+  border-radius: var(--radius-full);
+}
+
+.kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--space-16);
+}

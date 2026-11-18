@@ -1,0 +1,37 @@
+/* Global base. Design tokens come from src/styles/tokens.css (generated from design/tokens.json). */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  font-family: var(--font-family);
+  color: var(--color-text-body);
+}
+
+body {
+  margin: 0;
+  min-block-size: 100vh;
+  background: linear-gradient(180deg, var(--color-bg-page-top), var(--color-bg-page-bottom));
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.visually-hidden {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Headings and the main landmark receive programmatic focus on route changes: no ring, they are not controls. */
+[tabindex='-1']:focus {
+  outline: none;
+}

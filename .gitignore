@@ -4,3 +4,19 @@ obj/
 *.user
 node_modules/
 TestResults/
+
+# Secrets and local configuration (the repository is public: never commit these)
+.env
+.env.*
+!.env.example
+.dev.vars
+.dev.vars.*
+.wrangler/
+*.pfx
+*.pem
+*.key
+appsettings.*.local.json
+secrets.json
+
+# Local agent/workflow scratch space
+.superpowers/

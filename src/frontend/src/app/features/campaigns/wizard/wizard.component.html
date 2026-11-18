@@ -1,0 +1,92 @@
+<div class="page">
+  <div class="page-head">
+    <h1 class="t-h1-24">{{ s.name() || 'משלוח חדש' }}</h1>
+    <span class="sandbox-tag">Sandbox (מדומה)</span>
+    <span class="autosave num" role="status">{{ savedText() }}</span>
+  </div>
+
+  <nav aria-label="שלבי האשף">
+    <ol class="stepper">
+      @for (st of steps; track st.label; let i = $index) {
+        <li class="stepper__item">
+          @if (canVisit(i) && i !== s.step()) {
+            <button type="button" class="stepper__btn" (click)="visit(i)">
+              <rc-step-item [index]="i + 1" [label]="st.label" [hint]="st.hint" [state]="s.stepStates()[i]" />
+            </button>
+          } @else {
+            <rc-step-item [index]="i + 1" [label]="st.label" [hint]="st.hint" [state]="s.stepStates()[i]" />
+          }
+        </li>
+      }
+    </ol>
+  </nav>
+
+  <div class="visually-hidden step-announce" aria-live="polite">{{ stepAnnouncement() }}</div>
+
+  @if (s.serverState() === 'RELEASED') {
+    <rc-banner kind="info" message="המשלוח שוחרר לשליחה ואינו ניתן לעריכה." actionLabel="למעקב" (action)="openTracking()" />
+  } @else if (s.locked()) {
+    <div class="locked" role="status">
+      <rc-banner kind="info" [message]="confirmEdit() ? 'עריכה תבטל את ההגשה (ואישור קיים, אם יש) ותחייב בדיקה, הגשה ואישור מחדש.' : 'המשלוח הוגש לאישור ונעול לעריכה.'" />
+      <rc-button variant="secondary" (click)="startEdit()">{{ confirmEdit() ? 'עריכה תבטל את ההגשה — להמשיך' : 'עריכה' }}</rc-button>
+      @if (confirmEdit()) {
+        <rc-button variant="ghost" (click)="confirmEdit.set(false)">השארת ההגשה</rc-button>
+      }
+    </div>
+  }
+
+  @if (s.approvalInvalidated()) {
+    <rc-banner kind="warning" message="שינית את המשלוח אחרי ההגשה. האישור הקודם בוטל ויש להגיש מחדש." />
+  }
+
+  <div class="layout">
+    <app-wizard-summary class="layout__summary" />
+
+    <section class="card layout__main" [attr.aria-label]="'שלב ' + (s.step() + 1) + ': ' + steps[s.step()].label">
+      @switch (s.step()) {
+        @case (0) {
+          <app-step-audience />
+        }
+        @case (1) {
+          <app-step-channel />
+        }
+        @case (2) {
+          <app-step-content />
+        }
+        @case (4) {
+          <app-step-preflight />
+        }
+        @case (5) {
+          <app-step-submit />
+        }
+      }
+
+      <!-- Always present so a new error is announced. -->
+      <div class="layout__error" aria-live="assertive">
+        @if (s.error(); as e) {
+          <p class="error-text">{{ e.messageHe }}</p>
+        }
+      </div>
+
+      @if (!s.locked()) {
+        <div class="actions">
+          @if (s.step() > 0) {
+            <rc-button variant="ghost" [disabled]="s.busy()" (click)="back()">חזרה</rc-button>
+          }
+          <rc-button
+            class="actions__primary"
+            [disabled]="primary().disabled"
+            [disabledReason]="primary().reason"
+            (click)="next()"
+            >{{ s.busy() ? 'שומר…' : primary().label }}</rc-button
+          >
+        </div>
+      } @else {
+        <div class="actions">
+          <a class="link-btn" routerLink="/">חזרה לבית</a>
+          <a class="link-btn" routerLink="/campaigns">לרשימת המשלוחים</a>
+        </div>
+      }
+    </section>
+  </div>
+</div>

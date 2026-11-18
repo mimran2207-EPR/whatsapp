@@ -47,6 +47,14 @@ public sealed class TestDatabase : IAsyncLifetime
         return await new SqlCommand(sql, c).ExecuteNonQueryAsync();
     }
 
+
+    public async Task<T> ScalarAsync<T>(string sql)
+    {
+        await using var c = Open();
+        var result = await new SqlCommand(sql, c).ExecuteScalarAsync();
+        return (T)result!;
+    }
+
     private static string FindMigrationsDir()
     {
         var d = new DirectoryInfo(AppContext.BaseDirectory);
